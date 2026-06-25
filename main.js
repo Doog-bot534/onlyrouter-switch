@@ -248,7 +248,8 @@ async function setEnvVar(name, value) {
 function loginShellSpawn(cmd) {
   if (process.platform === 'win32') return spawn('cmd', ['/c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] })
   const userShell = process.env.SHELL || '/bin/zsh'
-  return spawn(userShell, ['-l', '-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] })
+  // -i(交互)让 shell 读 .zshrc，才能拿到 nvm / ~/.local/bin 等写在那里的 PATH，否则 npm/node 可能找不到
+  return spawn(userShell, ['-il', '-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] })
 }
 
 // ─── IPC：配置/模型 ─────────────────────────────────────────────
@@ -412,10 +413,26 @@ function codexAppPaths() {
 
 function whichCli(bin) {
   return new Promise(resolve => {
-    const cmd = process.platform === 'win32'
-      ? `where ${bin}`
-      : `${process.env.SHELL || '/bin/zsh'} -l -c "which ${bin}"`
-    exec(cmd, (err, stdout) => resolve(!err && stdout.trim().length > 0))
+    if (process.platform === 'win32') {
+      return exec(`where ${bin}`, (err, stdout) => resolve(!err && stdout.trim().length > 0))
+    }
+    // 交互式登录 shell(-ilc):会读 .zshrc，才能拿到写在那里的 PATH/别名/函数。
+    // 非交互登录 shell(-lc)只读 .zprofile/.zlogin，会漏掉 nvm、~/.local/bin、claude 本地安装等。
+    // command -v 还能识别别名与 shell 函数（部分安装方式用别名暴露 claude）。
+    const shell = process.env.SHELL || '/bin/zsh'
+    exec(`${shell} -ilc 'command -v ${bin}'`, (err, stdout) => {
+      if (!err && stdout.trim().length > 0) return resolve(true)
+      // 兜底：直接查常见安装路径（shell 探测失败也能命中）
+      const home = os.homedir()
+      const candidates = [
+        path.join(home, '.local/bin', bin),
+        path.join(home, '.claude/local', bin),
+        '/usr/local/bin/' + bin,
+        '/opt/homebrew/bin/' + bin,
+        path.join(home, '.npm-global/bin', bin),
+      ]
+      resolve(candidates.some(p => fs.existsSync(p)))
+    })
   })
 }
 
