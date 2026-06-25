@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OnlyRouter Switch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#09090b; --card:#18181b; --inset:#101012;
+  --line:rgba(255,255,255,.06); --line-2:rgba(255,255,255,.13);
+  --text:#fafafa; --dim:#71717a; --dim-2:#a1a1aa;
+  --lime:#b8ff00; --lime-soft:rgba(184,255,0,.10); --lime-glow:rgba(184,255,0,.18);
+  --blue:#818cf8; --green:#4ade80; --purple:#c084fc; --red:#f87171;
+  --font:'Inter','PingFang SC','Microsoft YaHei',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{font-family:var(--font);color:var(--text);background:var(--bg);font-size:13px;
+  line-height:1.5;-webkit-font-smoothing:antialiased;user-select:none;overflow:hidden;height:100vh}
+body{background-image:radial-gradient(600px 300px at 50% -60px, rgba(184,255,0,.07), transparent 70%)}
+
+.scroll-area{height:calc(100vh - 46px);overflow-y:auto;overflow-x:hidden;padding-bottom:20px}
+.scroll-area::-webkit-scrollbar{width:6px}
+.scroll-area::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:6px}
+
+/* 主体：左内容区 + 左侧竖排导航栏（rail），方便后续加视图 */
+.app-body{display:flex;height:calc(100vh - 46px)}
+.content-scroll{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding-bottom:20px}
+.content-scroll::-webkit-scrollbar{width:6px}
+.content-scroll::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:6px}
+.nav-rail{flex:none;width:96px;display:flex;flex-direction:column;gap:6px;padding:16px 10px;
+  background:rgba(9,9,11,.6);border-right:1px solid var(--line);backdrop-filter:blur(20px)}
+.nav-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 6px;border-radius:13px;
+  cursor:pointer;color:var(--dim);transition:.16s;user-select:none;position:relative}
+.nav-item:hover{background:rgba(255,255,255,.04);color:var(--dim-2)}
+.nav-item.on{background:var(--lime-soft);color:var(--lime)}
+.nav-item.on::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);
+  width:3px;height:22px;border-radius:3px;background:var(--lime);box-shadow:0 0 8px var(--lime)}
+.nav-ico{font-size:22px;line-height:1}
+.nav-lbl{font-size:11px;font-weight:600;letter-spacing:.2px;text-align:center;line-height:1.2}
+@media (max-width:430px){ .nav-rail{width:74px;padding:12px 6px} .nav-lbl{font-size:10px} .nav-ico{font-size:20px} }
+
+.titlebar{-webkit-app-region:drag;height:46px;display:flex;align-items:center;justify-content:center;
+  gap:8px;flex-shrink:0;user-select:none;background:rgba(9,9,11,.85);backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--line)}
+.titlebar *{-webkit-app-region:drag}
+.titlebar .logo{font-weight:700;font-size:13px;letter-spacing:-.2px;color:var(--lime)}
+.titlebar .pill{font-size:10px;font-weight:600;letter-spacing:1px;color:var(--dim);
+  border:1px solid var(--line-2);padding:2px 8px;border-radius:999px}
+
+.wrap{padding:20px 26px 0;width:100%}
+/* 单列内容（Key/生成面板）给舒适上限，避免超宽窗口里被拉得过长；横向卡区不受限，可铺满 */
+.col-cap{max-width:720px}
+/* 自适应：窄窗收紧留白；内容铺满窗口宽度（无 max-width，跟随窗口拉伸）*/
+@media (max-width:520px){ .wrap{padding:16px 14px 0} }
+@media (max-width:430px){ .gen-tabs{flex-wrap:wrap} }
+
+.section{margin-bottom:16px}
+.label{font-size:11px;font-weight:600;letter-spacing:.6px;color:var(--dim);margin-bottom:8px;
+  text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.label .right{text-transform:none;letter-spacing:0;font-weight:500;
+  font-size:11px;color:var(--dim);display:inline-flex;align-items:center;gap:5px}
+.label .right .d{width:6px;height:6px;border-radius:50%;background:var(--dim)}
+.label .right.live .d{background:var(--lime);box-shadow:0 0 6px var(--lime)}
+.label a{color:var(--lime);font-size:11px;letter-spacing:0;text-transform:none;font-weight:500;
+  text-decoration:none;cursor:pointer}
+.label a:hover{text-decoration:underline}
+
+.key-row{display:flex;gap:8px;align-items:stretch}
+.key-input{flex:1;background:var(--inset);border:1px solid var(--line-2);border-radius:10px;
+  padding:9px 12px;font-size:13px;font-family:monospace;color:var(--text);outline:none;transition:border-color .15s}
+.key-input::placeholder{color:var(--dim)}
+.key-input:focus{border-color:rgba(184,255,0,.4)}
+.key-input.valid{border-color:rgba(184,255,0,.5)}
+.key-input.locked{opacity:.65;cursor:default;border-color:var(--line)}
+
+.btn{border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;
+  padding:0 16px;transition:all .15s;white-space:nowrap;font-family:var(--font)}
+.btn-lime{background:var(--lime);color:#0a0a0a}
+.btn-lime:hover{background:#ccff00}
+.btn-lime:active{background:#a8e800}
+.btn-lime:disabled{opacity:.5;cursor:default}
+.btn-lime.checking{opacity:.7;cursor:default}
+.btn-ghost{background:var(--card);border:1px solid var(--line-2);color:var(--dim-2)}
+.btn-ghost:hover{border-color:var(--lime);color:var(--lime)}
+.btn-sm{padding:0 12px;height:32px;font-size:12px;border-radius:8px}
+
+.key-status{margin-top:6px;font-size:12px;height:16px}
+.key-status.ok{color:var(--lime)}
+.key-status.err{color:var(--red)}
+.key-status.checking{color:var(--dim-2)}
+
+/* 模型折叠分组 */
+#modelList,[id^="modelList-"]{display:flex;flex-direction:column;gap:8px}
+.mgroup{background:var(--inset);border:1px solid var(--line-2);border-radius:11px;
+  overflow:hidden;transition:border-color .15s;flex:none}
+.mgroup.has-selected{border-color:var(--lime);box-shadow:0 0 0 1px var(--lime) inset}
+.mgroup-head{display:flex;align-items:center;gap:10px;padding:11px 13px;cursor:pointer;transition:background .15s}
+.mgroup-head:hover{background:rgba(255,255,255,.02)}
+.mg-name{font-size:13.5px;font-weight:600;color:var(--text);white-space:nowrap}
+.mg-badge{font-size:9px;font-weight:700;letter-spacing:.5px;padding:2px 6px;border-radius:999px;flex-shrink:0}
+.bg-hot{background:var(--lime-soft);color:var(--lime)}
+.bg-code{background:rgba(129,140,248,.15);color:var(--blue)}
+.bg-top{background:rgba(248,113,113,.12);color:#fca5a5}
+.mg-meta{margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0}
+.mg-sel{font-size:11px;color:var(--lime);font-weight:500;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mg-low{font-size:11px;color:var(--dim)}
+.mg-low b{color:var(--dim-2);font-weight:600}
+.mg-count{font-size:10.5px;color:var(--dim);border:1px solid var(--line-2);padding:1px 7px;border-radius:999px}
+.mg-arrow{color:var(--dim);font-size:10px;transition:transform .2s;width:10px;text-align:center}
+.mgroup.open .mg-arrow{transform:rotate(180deg)}
+.mgroup-body{max-height:0;overflow:hidden;transition:max-height .25s ease}
+.mgroup.open .mgroup-body{max-height:400px}
+.chrow{display:flex;align-items:center;gap:10px;padding:9px 13px 9px 14px;cursor:pointer;
+  border-top:1px solid var(--line);transition:background .12s}
+.chrow:hover{background:rgba(255,255,255,.025)}
+.ch-radio{width:14px;height:14px;border-radius:50%;border:2px solid var(--line-2);
+  flex-shrink:0;transition:all .15s;position:relative}
+.chrow.sel .ch-radio{border-color:var(--lime)}
+.chrow.sel .ch-radio::after{content:'';position:absolute;inset:2px;border-radius:50%;background:var(--lime)}
+.ch-name{font-size:12.5px;font-weight:500;color:var(--text)}
+.ch-tag{font-size:9px;font-weight:600;padding:1px 6px;border-radius:999px}
+.ch-lime{background:var(--lime-soft);color:var(--lime)}
+.ch-blue{background:rgba(129,140,248,.13);color:var(--blue)}
+.ch-green{background:rgba(74,222,128,.13);color:var(--green)}
+.ch-purple{background:rgba(192,132,252,.13);color:var(--purple)}
+.ch-price{margin-left:auto;font-size:11.5px;color:var(--dim);white-space:nowrap}
+.ch-price b{color:var(--lime);font-weight:600}
+
+.model-lock{display:flex;flex-direction:column;align-items:center;gap:11px;padding:40px 20px;
+  border:1px dashed var(--line-2);border-radius:12px;color:var(--dim);text-align:center;font-size:12.5px;line-height:1.6}
+.model-lock svg{width:26px;height:26px;color:var(--dim);opacity:.7}
+.loading{text-align:center;padding:30px;color:var(--dim);font-size:12px}
+.more-btn{flex:none;text-align:center;padding:10px;font-size:12px;color:var(--dim-2);
+  border:1px dashed var(--line-2);border-radius:10px;cursor:pointer;transition:all .15s;margin-top:1px}
+.more-btn:hover{color:var(--lime);border-color:rgba(184,255,0,.4)}
+
+/* 产品卡（仅配置）*/
+.divider{height:1px;background:var(--line);margin:4px 0 16px}
+.product-card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  margin-bottom:12px;overflow:hidden;transition:border-color .15s}
+.product-card:hover{border-color:var(--line-2)}
+.product-header{display:flex;align-items:center;gap:12px;padding:14px 16px 12px;border-bottom:1px solid var(--line)}
+.product-mark{width:36px;height:36px;border-radius:9px;flex-shrink:0;overflow:hidden;
+  display:flex;align-items:center;justify-content:center}
+.product-mark img{width:100%;height:100%;object-fit:cover;display:block}
+.product-info{flex:1;min-width:0}
+.product-name{font-size:15px;font-weight:700;letter-spacing:-.3px}
+.product-desc{font-size:11.5px;color:var(--dim-2);margin-top:1px}
+.status-row{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.status-dot{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:500}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot-ok{background:var(--lime);box-shadow:0 0 6px var(--lime)}
+.dot-err{background:var(--dim);opacity:.5}
+.product-body{padding:14px 16px}
+.action-note{font-size:11.5px;color:var(--dim);margin-top:9px}
+.action-note code{color:var(--lime)}
+.action-note a{color:var(--lime);cursor:pointer;text-decoration:none}
+.action-note a:hover{text-decoration:underline}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+  background:var(--card);border:1px solid var(--lime);border-radius:10px;padding:8px 16px;
+  font-size:13px;font-weight:500;color:var(--lime);pointer-events:none;opacity:0;
+  transition:opacity .2s;z-index:100;white-space:nowrap;box-shadow:0 0 20px var(--lime-glow)}
+.toast.show{opacity:1}
+
+/* 配置成功对话框：不自动消失，承载"需重启终端"这类重要提示 */
+.modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);
+  display:none;align-items:center;justify-content:center;z-index:200}
+.modal-mask.show{display:flex}
+.modal{width:340px;max-width:88vw;background:var(--card);border:1px solid var(--line-2);
+  border-radius:16px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5);animation:up .25s both}
+.modal .m-ico{font-size:30px;margin-bottom:10px}
+.modal .m-title{font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px}
+.modal .m-body{font-size:13px;color:var(--dim-2);line-height:1.7;margin-bottom:18px;
+  max-height:46vh;overflow-y:auto;user-select:text;-webkit-user-select:text;word-break:break-word;white-space:pre-wrap}
+.modal .m-body b{color:var(--lime);font-weight:600}
+.modal .m-body::-webkit-scrollbar{width:5px}
+.modal .m-body::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:5px}
+.modal .m-err{margin-top:10px;padding:9px 11px;background:var(--inset);border:1px solid var(--line);
+  border-radius:8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--red);
+  user-select:text;-webkit-user-select:text}
+.modal .m-ok{width:100%;background:var(--lime);color:#0a0a0a;border:none;border-radius:999px;
+  padding:11px;font-size:14px;font-weight:700;font-family:var(--font);cursor:pointer}
+.modal .m-ok:hover{filter:brightness(1.08)}
+/* 重启终端：主按钮（实心绿）+ 次按钮（描边）并排 */
+.modal .m-actions{display:flex;flex-direction:column;gap:8px}
+.modal .m-act{width:100%;background:var(--lime);color:#0a0a0a;border:none;border-radius:999px;
+  padding:11px;font-size:14px;font-weight:700;font-family:var(--font);cursor:pointer}
+.modal .m-act:hover{filter:brightness(1.08)}
+.modal .m-act.ghost{background:transparent;color:var(--dim-2);border:1px solid var(--line-2);font-weight:600}
+.modal .m-act.ghost:hover{filter:none;border-color:var(--dim-2);color:var(--text)}
+
+/* 工具配置卡：横向滑动 card（scroll-snap），方便后续拓展更多产品 */
+.tool-track{display:flex;align-items:flex-start;gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;
+  -webkit-overflow-scrolling:touch;scroll-behavior:smooth;padding:2px 0 6px;margin:0 -26px;padding-left:26px;padding-right:26px}
+.tool-track::-webkit-scrollbar{height:0}
+/* 固定理想宽度：窄窗一屏一张（可滑），宽窗一屏自然多张并排 */
+.tool-card{flex:0 0 380px;scroll-snap-align:start;
+  background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;transition:border-color .15s}
+.tool-card:hover{border-color:var(--line-2)}
+/* 卡片指示点：当前卡高亮，可点击跳转 */
+.tool-dots{display:flex;justify-content:center;gap:7px;margin-top:10px}
+.tool-dot{width:7px;height:7px;border-radius:999px;background:var(--line-2);cursor:pointer;transition:.2s}
+.tool-dot.on{width:20px;background:var(--lime)}
+.tcard-sub{padding:13px 16px;border-top:1px solid var(--line)}
+.tcard-sub > .label{margin-bottom:9px}
+.tcard-sub .model-wrap{position:relative}
+/* 模型列表区：限高 + 内部滚动，避免全展开把卡撑得极长 */
+.tcard-sub .model-wrap #modelList-codex,.tcard-sub .model-wrap #modelList-claude{max-height:300px;overflow-y:auto;padding-right:2px}
+.model-wrap [id^="modelList-"]::-webkit-scrollbar{width:5px}
+.model-wrap [id^="modelList-"]::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:5px}
+@media (max-width:520px){ .tool-track{margin:0 -14px;padding-left:14px;padding-right:14px} }
+@media (max-width:430px){ .tool-card{flex-basis:86vw} }
+/* 卡内增强开关：紧凑行，点整行展开详情 */
+.optrow{border:1px solid var(--line-2);border-radius:11px;background:var(--inset);margin-top:8px;overflow:hidden;transition:border-color .2s}
+.optrow.on{border-color:var(--lime-glow)}
+.optrow-head{display:flex;align-items:center;gap:10px;padding:11px 13px}
+.optrow-emoji{font-size:17px;flex:none}
+.optrow-info{flex:1;min-width:0;cursor:pointer}
+.optrow-name{font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:7px}
+.optrow-name .mode-tag{font-size:9px;font-weight:700;letter-spacing:.4px;padding:1px 6px;border-radius:999px;background:var(--lime-soft);color:var(--lime)}
+.optrow-sum{font-size:11px;color:var(--dim-2);margin-top:2px;line-height:1.5}
+.optrow-detail{display:none;font-size:11.5px;color:var(--dim-2);line-height:1.7;padding:0 13px 12px 40px}
+.optrow.on .optrow-detail{display:block}
+.optrow-detail b{color:var(--lime);font-weight:600}
+
+@keyframes up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.product-card{animation:up .4s both}
+.product-card:nth-child(1){animation-delay:.05s}
+.product-card:nth-child(2){animation-delay:.12s}
+
+.footer{text-align:center;padding:16px;font-size:11px;color:var(--dim)}
+.footer a{color:var(--dim-2);text-decoration:none;cursor:pointer}
+.footer a:hover{color:var(--lime)}
+
+/* 增强模式开关卡片（智能路由 / 安全网关，互不排斥） */
+.mode-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 15px;margin-bottom:12px;transition:border-color .2s}
+.mode-card.on{border-color:var(--lime-glow)}
+.mode-top{display:flex;align-items:flex-start;gap:11px}
+.mode-emoji{font-size:20px;line-height:1.2;flex:none;margin-top:1px}
+.mode-info{flex:1;min-width:0}
+.mode-name{font-size:14px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:7px}
+.mode-tag{font-size:10px;font-weight:600;color:var(--dim);border:1px solid var(--line-2);border-radius:999px;padding:1px 7px}
+.mode-sum{font-size:12px;color:var(--dim-2);line-height:1.55;margin-top:4px}
+.mode-detail{font-size:12px;color:var(--dim);line-height:1.7;margin-top:9px;padding-top:9px;border-top:1px dashed var(--line-2);display:none}
+.mode-card.on .mode-detail{display:block}
+.mode-detail b{color:var(--dim-2);font-weight:600}
+/* 开关 */
+.switch{position:relative;width:42px;height:24px;flex:none;cursor:pointer}
+.switch input{opacity:0;width:0;height:0;position:absolute}
+.switch .track{position:absolute;inset:0;background:var(--inset);border:1px solid var(--line-2);border-radius:999px;transition:.2s}
+.switch .knob{position:absolute;top:3px;left:3px;width:16px;height:16px;background:var(--dim-2);border-radius:50%;transition:.2s}
+.switch input:checked + .track{background:var(--lime-soft);border-color:var(--lime)}
+.switch input:checked + .track + .knob{transform:translateX(18px);background:var(--lime)}
+.mode-state{font-size:11px;font-weight:600;margin-top:3px;text-align:right}
+.mode-state.on{color:var(--lime)} .mode-state.off{color:var(--dim)}
+/* 智能模式开启时锁定手动选模型 */
+.model-wrap{position:relative}
+.smart-lock{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(9,9,11,.86);backdrop-filter:blur(3px);border-radius:12px;padding:16px;text-align:center}
+#modelSection.locked .smart-lock{display:flex}
+#modelSection.locked #modelList{filter:grayscale(.8);opacity:.35;pointer-events:none}
+.smart-lock-in{font-size:12px;color:var(--dim-2);line-height:1.65;max-width:320px}
+.smart-lock-in b{color:var(--lime);font-weight:700}
+.fusion-row{border:1px solid var(--lime-glow)!important;background:linear-gradient(90deg,var(--lime-soft),transparent)}
+.fusion-row.has-selected{border-color:var(--lime)!important}
+.fusion-row .mg-name{color:var(--lime)}
+
+/* 视图切换为左侧导航栏（.nav-rail）*/
+/* 生成面板 */
+.gen-tabs{display:flex;gap:8px;margin:6px 0 14px}
+.gen-tab{padding:7px 16px;border-radius:999px;font-size:13px;font-weight:600;color:var(--dim);background:var(--inset);border:1px solid var(--line);cursor:pointer;user-select:none}
+.gen-tab.on{color:var(--lime);border-color:var(--lime)}
+.gen-field{display:block;font-size:12px;font-weight:600;color:var(--dim);margin:14px 0 7px}
+.gen-input,.gen-textarea,.gen-select{width:100%;background:var(--inset);border:1px solid var(--line-2);border-radius:10px;
+  color:var(--text);font-family:var(--font);font-size:13px;padding:11px 12px;outline:none}
+.gen-textarea{min-height:88px;resize:vertical;line-height:1.6;user-select:text}
+.gen-select{cursor:pointer;appearance:none}
+.gen-go{width:100%;background:var(--lime);color:#0a0a0a;border:none;border-radius:999px;padding:12px;
+  font-size:14px;font-weight:700;font-family:var(--font);cursor:pointer;margin-top:16px}
+.gen-go:disabled{opacity:.5;cursor:not-allowed}
+.gen-go:hover:not(:disabled){filter:brightness(1.08)}
+.gen-out{margin-top:16px;min-height:40px}
+.gen-out .ph{color:var(--dim);font-size:13px;text-align:center;padding:24px 0}
+.gen-out .txt{white-space:pre-wrap;font-size:13px;line-height:1.75;color:var(--text);user-select:text;
+  background:var(--inset);border:1px solid var(--line);border-radius:12px;padding:14px}
+.gen-out img,.gen-out video{max-width:100%;border-radius:12px;display:block;border:1px solid var(--line);background:#000}
+.gen-status{font-size:12px;color:var(--dim);margin-top:10px;display:flex;align-items:center;gap:7px}
+.gen-status .spin{width:12px;height:12px;border:2px solid var(--line-2);border-top-color:var(--lime);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.gen-dl{display:inline-flex;margin-top:10px;text-decoration:none;background:var(--lime);color:#0a0a0a;
+  font-weight:700;font-size:12px;border-radius:999px;padding:8px 16px}
+.gen-hint{font-size:12px;color:var(--dim);line-height:1.6;margin-top:6px}
+.gen-nokey{background:var(--inset);border:1px solid var(--line-2);border-radius:12px;padding:18px;text-align:center;color:var(--dim-2);font-size:13px;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="titlebar">
+  <span class="logo">OnlyRouter</span>
+  <span class="pill">SWITCH v1.3.1</span>
+</div>
+<div class="app-body">
+<!-- 左侧竖排导航栏：视图切换（由 VIEWS 数据驱动，加视图只需加一项）-->
+<nav class="nav-rail" id="navRail"></nav>
+<div class="content-scroll" id="contentScroll">
+<div class="wrap">
+
+<div id="viewConfig">
+
+<!-- API Key -->
+<div class="section col-cap" style="margin-top:18px">
+  <div class="label">API Key <a id="linkConsole">前往控制台创建</a></div>
+  <div class="key-row">
+    <input type="password" class="key-input" id="keyInput" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+    <button class="btn btn-lime" id="btnSaveKey" style="height:38px">验证并保存</button>
+  </div>
+  <div class="key-status" id="keyStatus"></div>
+</div>
+
+<!-- 工具配置卡：每个工具的全部设置聚合一处（模型/双开关/配置），由 JS 按工具渲染 -->
+<div class="section" style="margin-top:18px">
+  <div class="label">配置你的 AI 工具
+    <span class="right" id="srcBadge"><span class="d"></span><span id="srcText">加载中</span></span>
+  </div>
+  <div class="action-note" style="margin:-2px 0 12px">左右滑动切换工具 · 每个工具可单独选模型、单独开关增强功能，互不影响。</div>
+  <div class="tool-track" id="toolCards"></div>
+  <div class="tool-dots" id="toolDots"></div>
+</div>
+
+</div><!-- /viewConfig -->
+
+<!-- 生成内容视图 -->
+<div id="viewGen" class="col-cap" style="display:none">
+  <div class="action-note" style="margin:14px 0 10px">在这里直接用 AI 生成文字、图片或视频，结果会显示在下面，可以直接下载。</div>
+  <div class="gen-tabs">
+    <div class="gen-tab on" data-gen="text">📝 文本</div>
+    <div class="gen-tab" data-gen="image">🖼 图片</div>
+    <div class="gen-tab" data-gen="video">🎬 视频</div>
+  </div>
+
+  <div id="genNoKey" class="gen-nokey" style="display:none">
+    还没有验证 API Key。<br>请先切到「⚙️ 配置工具」填入并验证你的 Key，再回来生成。
+  </div>
+
+  <div id="genForm">
+    <label class="gen-field">选择模型</label>
+    <select class="gen-select" id="genModel"></select>
+
+    <label class="gen-field" id="genPromptLabel">描述你想要的内容</label>
+    <textarea class="gen-textarea" id="genPrompt" placeholder="例如：一只戴着宇航员头盔的橘猫，扁平插画风"></textarea>
+
+    <div id="genSizeWrap" style="display:none">
+      <label class="gen-field">图片尺寸</label>
+      <select class="gen-select" id="genSize"></select>
+      <div class="gen-hint" id="genSizeHint"></div>
+    </div>
+
+    <div id="genVidWrap" style="display:none">
+      <label class="gen-field">分辨率</label>
+      <select class="gen-select" id="genRes"></select>
+      <label class="gen-field">时长</label>
+      <select class="gen-select" id="genDur"></select>
+      <div class="gen-hint">不同模型支持的分辨率和时长不同，已自动为该模型筛选可用项。</div>
+    </div>
+
+    <button class="gen-go" id="genGo">开始生成</button>
+    <div class="gen-status" id="genStatus" style="display:none"></div>
+    <div class="gen-out" id="genOut"><div class="ph">生成结果会显示在这里</div></div>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<div class="footer">
+  <a id="linkOnlyRouter">onlyrouter.ai</a> · <a id="linkDocs">接入文档</a>
+</div>
+</div><!-- /content-scroll -->
+</div><!-- /app-body -->
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-mask" id="modalMask">
+  <div class="modal">
+    <div class="m-ico" id="mIco">✅</div>
+    <div class="m-title" id="mTitle">配置成功</div>
+    <div class="m-body" id="mBody"></div>
+    <div class="m-actions" id="mActions"></div>
+    <button class="m-ok" id="mOk">知道了</button>
+  </div>
+</div>
+
+<script>
+// ─── 渠道元信息 ──────────────────────────────────────────────────
+function normChannel(raw) {
+  if (raw === 'AB' || raw === 'AB kiro') return 'ab'
+  if (raw === 'OpenRouter') return 'openrouter'
+  if (raw === 'Gonka') return 'gonka'
+  return 'official'
+}
+const CH_META = {
+  official:   { label: '官方直连',  tag: '稳定', cls: 'ch-lime' },
+  openrouter: { label: 'OpenRouter', tag: '聚合', cls: 'ch-blue' },
+  ab:         { label: 'AB 特惠',   tag: '省钱', cls: 'ch-green' },
+  gonka:      { label: 'Gonka',     tag: '算力', cls: 'ch-purple' },
+}
+const CH_ORDER = { official: 0, ab: 1, openrouter: 2, gonka: 3 }
+const BADGES = {
+  'GPT-5.5':           { t: '顶配', c: 'bg-top' },
+  'GPT-5.4 mini':      { t: '推荐', c: 'bg-hot' },
+  'DeepSeek V4 Flash': { t: '推荐', c: 'bg-hot' },
+  'Claude Sonnet 4.6': { t: '推荐', c: 'bg-hot' },
+  'Kimi K2.7 Code':    { t: '代码', c: 'bg-code' },
+}
+const PRIORITY = [
+  'GPT-5.5', 'Claude Sonnet 4.6', 'Claude Opus 4.8', 'GPT-5.4',
+  'GPT-5.4 mini', 'DeepSeek V4 Pro', 'DeepSeek V4 Flash', 'Kimi K2.7 Code',
+]
+
+// ─── 状态 ───────────────────────────────────────────────────────
+let state = {
+  key: '', keyValid: false, keyLocked: false,
+  groups: [], modelsRaw: [],
+  codexConfigured: false, claudeConfigured: false,
+  // 安装状态：进入 App 时检测。Codex = App 或 CLI 任一装了即为已装；Claude = CLI 装了即为已装。
+  // null = 尚未检测完成（按钮先不因「未装」而禁用，避免误判）
+  codexInstalled: null, claudeInstalled: null,
+  // 按工具独立配置：模型 + 两个增强开关 + 各自的展开态（两张卡的模型选择器独立渲染）
+  codex:  { model: 'gpt-5.5',           smartMode: false, securityMode: false, expanded: new Set(), showAll: false },
+  claude: { model: 'claude-opus-4-8-ab', smartMode: false, securityMode: false, expanded: new Set(), showAll: false },
+}
+// 工具元信息：渲染卡头与文案用
+const TOOLS = {
+  codex:  { name: 'Codex',       desc: 'OpenAI 编程助手 · App 与命令行通用', icon: 'codex-icon.png',  cli: 'codex',  fusion: true,  claudeOnly: false, envBased: true },
+  claude: { name: 'Claude Code', desc: 'Anthropic 官方编程工具（命令行）',    icon: 'claude-icon.png', cli: 'claude', fusion: true,  claudeOnly: false, envBased: false },
+}
+// 工具顺序（后续加新产品只需往 TOOLS 加一项，全 UI 自动纳入）
+const TOOL_ORDER = Object.keys(TOOLS)
+// 友好显示模型名（去掉 -ab/-openrouter 渠道后缀，Fusion 用中文名）
+function prettyModel(m) {
+  if (!m) return '未选'
+  if (m === 'onlyrouter-fusion') return 'Fusion 融合款'
+  return m.replace(/-(ab|openrouter)$/i, '')
+}
+
+// ─── 工具 ───────────────────────────────────────────────────────
+function fmt(n) {
+  if (n == null) return '—'
+  if (n < 0.01) return '$' + Number(n.toFixed(4)).toString()
+  return '$' + (n < 1 ? Number(n.toFixed(3)).toString() : Number(n.toFixed(2)).toString())
+}
+// Fusion 价格预估：面板(最便宜 Opus + 最便宜 GPT-5.5)各跑一遍 + 评委(Opus)再跑一遍 ≈ 2×Opus + 1×GPT
+function fusionEstimate() {
+  const raw = state.modelsRaw || []
+  const cheapest = re => raw.filter(m => re.test(m.name) && m.input_price != null)
+    .sort((a, b) => a.input_price - b.input_price)[0]
+  const opus = cheapest(/opus/i), gpt = cheapest(/gpt-?5\.?5/i)
+  if (!opus || !gpt) return null
+  return {
+    input: 2 * opus.input_price + gpt.input_price,
+    output: 2 * (opus.output_price || 0) + (gpt.output_price || 0),
+  }
+}
+function toast(msg) {
+  const el = document.getElementById('toast')
+  el.textContent = msg
+  el.classList.add('show')
+  setTimeout(() => el.classList.remove('show'), 2200)
+}
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+}
+function showDialog(title, bodyHtml, ico, actions) {
+  document.getElementById('mIco').textContent = ico || '✅'
+  document.getElementById('mTitle').textContent = title
+  document.getElementById('mBody').innerHTML = bodyHtml
+  // actions：[{label, primary?, onClick?}]。传了就用按钮组替代默认"知道了"；不传则保持原行为。
+  const actWrap = document.getElementById('mActions')
+  const okBtn = document.getElementById('mOk')
+  actWrap.innerHTML = ''
+  if (Array.isArray(actions) && actions.length) {
+    okBtn.style.display = 'none'
+    for (const a of actions) {
+      const b = document.createElement('button')
+      b.className = 'm-act' + (a.primary ? '' : ' ghost')
+      b.textContent = a.label
+      b.addEventListener('click', async () => {
+        if (a.onClick) { try { await a.onClick() } catch {} }
+        if (a.close !== false) closeDialog()
+      })
+      actWrap.appendChild(b)
+    }
+  } else {
+    okBtn.style.display = ''
+  }
+  document.getElementById('modalMask').classList.add('show')
+}
+function closeDialog() { document.getElementById('modalMask').classList.remove('show') }
+// 错误对话框：说明 + 完整可复制的原始报错（小白也能整段发给客服）
+function showError(title, hint, raw) {
+  const errBox = raw ? `<div class="m-err">${escapeHtml(raw)}</div>` : ''
+  showDialog(title, hint + errBox + '<br><span style="font-size:12px;color:var(--dim)">如需帮助，可长按选中上面的报错全文复制发给我们。</span>', '⚠️')
+}
+function setStatus(dotId, lblId, ok, text) {
+  const dot = document.getElementById(dotId), lbl = document.getElementById(lblId)
+  if (!dot || !lbl) return
+  dot.className = 'dot ' + (ok ? 'dot-ok' : 'dot-err')
+  lbl.textContent = text
+}
+
+// ─── 分组 ───────────────────────────────────────────────────────
+function groupModels(models) {
+  const map = {}
+  models.forEach(m => {
+    const mt = m.display_name.match(/\((.*?)\)/)
+    const chRaw = mt ? mt[1] : '官方直连'
+    const base = m.display_name.replace(/\s*\(.*?\)\s*/, '').trim()
+    const ch = normChannel(chRaw)
+    if (!map[base]) map[base] = { base, channels: [] }
+    map[base].channels.push({ ...m, ch })
+  })
+  const groups = Object.values(map)
+  groups.forEach(g => {
+    g.channels.sort((a, b) =>
+      (a.input_price + a.output_price) - (b.input_price + b.output_price) ||
+      CH_ORDER[a.ch] - CH_ORDER[b.ch])
+    g.minInput = Math.min(...g.channels.map(c => c.input_price))
+  })
+  groups.sort((a, b) => {
+    const pa = PRIORITY.indexOf(a.base), pb = PRIORITY.indexOf(b.base)
+    const ra = pa === -1 ? 999 : pa, rb = pb === -1 ? 999 : pb
+    return ra - rb || a.minInput - b.minInput
+  })
+  return groups
+}
+
+// ─── 渲染工具卡（按工具聚合：卡头 + 模型选择 + 双开关 + 配置按钮）──────────
+const SMART_DETAIL = `打开后：<br>· <b>完全自动分配</b>，不受你手动选择影响（该卡的模型选择会被锁定）。<br>· <b>简单小修改</b>用又快又省的模型，<b>难题</b>自动用最强的模型——该省时省、该强时强。<br>· 同一对话里<b>不会中途乱换模型</b>，保证连贯也省缓存；遇到难题才升级。<br>· 某个<b>渠道/模型出故障会自动切到备用</b>，请求不中断。<br>· 不打开则一直用你为本工具选定的模型。`
+const SEC_DETAIL = `打开后：<br>· 会检查 AI <b>返回的内容</b>里是否<b>藏了隐藏字符、可疑外链，或诱导你执行危险命令</b>（即"投毒"），自动清理并标记风险。<br>· 用中转/代理时上游返回的内容不一定可信，这一层替你把关。<br>· 不打开则不检查返回内容。<br><span style="color:var(--dim)">说明：内容本就要发给云端模型，所以这层<b style="color:var(--dim-2)">不做"隐藏隐私"</b>，只专注"防止收到的东西有毒"。</span>`
+
+// 构建一张工具卡的骨架（一次性），模型列表/开关状态由后续 renderModels/reflectMode 填充
+function buildToolCard(tool) {
+  const t = TOOLS[tool]
+  const card = document.createElement('div')
+  card.className = 'tool-card'
+  card.innerHTML = `
+    <div class="product-header">
+      <div class="product-mark"><img src="${t.icon}" alt="${t.name}"></div>
+      <div class="product-info">
+        <div class="product-name">${t.name}</div>
+        <div class="product-desc">${t.desc}</div>
+      </div>
+      <div class="status-row"><div class="status-dot">
+        <div class="dot dot-err" id="dot-${tool}"></div><span id="lbl-${tool}">未配置</span>
+      </div></div>
+    </div>
+    <div class="tcard-sub" id="modelSection-${tool}">
+      <div class="label">选择模型</div>
+      ${t.claudeOnly ? '' : (tool === 'claude' ? '<div class="action-note" style="margin:-4px 0 8px">可用任意模型；选非 Claude 系列时网关会自动做协议转换。</div>' : '')}
+      <div class="model-wrap">
+        <div id="modelList-${tool}"><div class="loading">正在加载模型列表…</div></div>
+        <div class="smart-lock">
+          <div class="smart-lock-in">
+            <div style="font-size:22px;margin-bottom:6px">🧠</div>
+            <div style="font-weight:700;color:var(--text);margin-bottom:4px">智能模式已接管模型选择</div>
+            <div>系统会自动挑选最合适、最划算的模型，<b>无需手动选</b>。想自己选请关下方「智能路由」。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="tcard-sub">
+      <div class="label">增强功能（可选）</div>
+      <div class="optrow" id="opt-smart-${tool}">
+        <div class="optrow-head">
+          <div class="optrow-emoji">🧠</div>
+          <div class="optrow-info" data-toggle="smart"><div class="optrow-name">智能路由 <span class="mode-tag">帮你省钱</span></div><div class="optrow-sum">系统自动为每次请求挑最划算的模型，开启后无需手动选。</div></div>
+          <label class="switch"><input type="checkbox" id="sw-smart-${tool}"><span class="track"></span><span class="knob"></span></label>
+        </div>
+        <div class="optrow-detail">${SMART_DETAIL}</div>
+      </div>
+      <div class="optrow" id="opt-sec-${tool}">
+        <div class="optrow-head">
+          <div class="optrow-emoji">🛡️</div>
+          <div class="optrow-info" data-toggle="sec"><div class="optrow-name">安全网关 <span class="mode-tag">防投毒</span></div><div class="optrow-sum">检查 AI 返回内容有没有被投毒——藏指令、可疑链接、危险命令。</div></div>
+          <label class="switch"><input type="checkbox" id="sw-sec-${tool}"><span class="track"></span><span class="knob"></span></label>
+        </div>
+        <div class="optrow-detail">${SEC_DETAIL}</div>
+      </div>
+    </div>
+    <div class="tcard-sub">
+      <button class="btn btn-lime btn-sm" id="btnConfig-${tool}" style="width:100%">一键配置</button>
+      <div class="action-note">配置后终端输入 <code>${t.cli}</code> 即可使用 · <a id="docs-${tool}">查看文档</a></div>
+    </div>`
+  return card
+}
+
+// 把所有工具卡插入横向轨道 + 构建指示点 + 同步滚动高亮（只建一次）
+function renderToolCards() {
+  const wrap = document.getElementById('toolCards')
+  const dots = document.getElementById('toolDots')
+  if (!wrap) return
+  wrap.innerHTML = ''
+  if (dots) dots.innerHTML = ''
+  TOOL_ORDER.forEach((tool, i) => {
+    wrap.appendChild(buildToolCard(tool))
+    const btn = document.getElementById('btnConfig-' + tool)
+    if (btn) btn.addEventListener('click', () => configTool(tool))
+    const docs = document.getElementById('docs-' + tool)
+    if (docs) docs.addEventListener('click', () => window.api.openUrl('https://onlyrouter.ai/docs'))
+    // 指示点：点击滚到对应卡
+    if (dots) {
+      const d = document.createElement('div')
+      d.className = 'tool-dot' + (i === 0 ? ' on' : '')
+      d.addEventListener('click', () => {
+        const card = wrap.children[i]
+        if (card) wrap.scrollTo({ left: card.offsetLeft - wrap.offsetLeft, behavior: 'smooth' })
+      })
+      dots.appendChild(d)
+    }
+  })
+  // 单卡时无需指示点
+  if (dots) dots.style.display = TOOL_ORDER.length > 1 ? '' : 'none'
+  // 滚动时高亮最居中的卡对应的点
+  let raf = null
+  wrap.addEventListener('scroll', () => {
+    if (raf) return
+    raf = requestAnimationFrame(() => {
+      raf = null
+      const center = wrap.scrollLeft + wrap.clientWidth / 2
+      let best = 0, bestDist = Infinity
+      for (let i = 0; i < wrap.children.length; i++) {
+        const c = wrap.children[i]
+        const cc = c.offsetLeft - wrap.offsetLeft + c.offsetWidth / 2
+        const dist = Math.abs(cc - center)
+        if (dist < bestDist) { bestDist = dist; best = i }
+      }
+      if (dots) [...dots.children].forEach((d, i) => d.classList.toggle('on', i === best))
+    })
+  })
+}
+
+// 一键配置某工具：写配置 + 成功后弹「帮我重启终端」对话框（两工具共用，差异用 TOOLS 元信息）
+async function configTool(tool) {
+  if (!state.keyValid) { toast('请先验证 API Key'); return }
+  const t = TOOLS[tool]
+  const btn = document.getElementById('btnConfig-' + tool)
+  const oldTxt = btn ? btn.textContent : ''
+  if (btn) { btn.disabled = true; btn.textContent = '配置中…' }
+  try {
+    const r = tool === 'codex'
+      ? await window.api.writeCodexConfig(state.codex.model, state.key)
+      : await window.api.writeClaudeConfig(state.key, state.claude.model)
+    if (r && r.success) {
+      if (tool === 'codex') state.codexConfigured = true; else state.claudeConfigured = true
+      updateUI()
+      if (r.envOk === false) {
+        showError('配置文件已写入，但 Key 没存进环境变量',
+          `${t.name} 的配置文件已写好，但把 API Key 存进系统环境变量这步失败了，运行时可能找不到 Key。<br>解决：关闭杀毒软件/以管理员身份重开本程序再点一次。`, r.error)
+      } else if (t.envBased && r.needRestart) {
+        // 首次把 Key 写进环境变量(.zshrc/用户环境变量)：已开着的终端读不到，需重启一次。
+        // 之后网关接管鉴权（用最新 Key 注入请求），换 Key/换模型都不必再重启。
+        // Codex 既能当 App 又能当 CLI，重启对象不同——探测装了哪个，只给对应的重启按钮。
+        const [appR, cliR] = await Promise.all([
+          window.api.checkInstall('codex-app'),
+          window.api.checkInstall('codex-cli'),
+        ])
+        const hasApp = !!(appR && appR.installed)
+        const hasCli = !!(cliR && cliR.installed)
+        const actions = []
+        if (hasApp) actions.push({ label: '重启 Codex App', primary: true, onClick: async () => {
+          const rr = await window.api.restartApp()
+          if (!(rr && rr.success)) toast('重启 App 失败，请手动退出再打开 Codex')
+        } })
+        if (hasCli) actions.push({ label: hasApp ? '我用命令行' : '帮我重启终端', primary: !hasApp, onClick: async () => {
+          const rr = await window.api.restartTerminal(t.cli)
+          if (!(rr && rr.success)) toast(`打开终端失败，请手动重开终端运行 ${t.cli}`)
+        } })
+        // 两者都没装：没东西可重启，主按钮就是「知道了」
+        actions.push({ label: (hasApp || hasCli) ? '我自己来' : '知道了', primary: !(hasApp || hasCli) })
+        // 按探测结果给出对应说法：装了 App 强调退出重开 App，只装 CLI 强调重开终端，都没装则提示先装
+        const how = hasApp && hasCli
+          ? `用 <b>Codex App</b> 的点「重启 App」，用<b>命令行</b>的点「重启终端」。`
+          : hasApp
+            ? `你装的是 <b>Codex App</b>，需要<b>退出再重新打开</b>它才会读到新配置（已开着的窗口不会自动更新）。`
+            : hasCli
+              ? `刚设置的内容只对<b>重新打开</b>的终端生效，在已开着的窗口里直接运行会找不到。`
+              : `配置已就绪。等你安装好 Codex（App 或命令行）后，<b>首次打开</b>就会直接读到这份配置。`
+        showDialog(`${t.name} 配置成功 🎉`,
+          `已写好配置。<br><br>⚠️ <b>首次配置需重启一次</b>：${how}<br><br>以后再改模型或换 Key 就不用重启了。`,
+          '✅', actions)
+      } else {
+        // 非首次（Codex 网关已接管 Key）或 Claude（读 settings.json）：均无需重开终端，下次运行直接生效
+        showDialog(`${t.name} 配置成功 🎉`,
+          `已写好配置，<b>无需重启终端</b>。<br><br>直接在终端运行 <b>${t.cli}</b> 就能用最新的模型和渠道。如果当前 <b>${t.cli}</b> 正在运行，退出后重新运行一次即可。`,
+          '✅',
+          [{ label: '知道了', primary: true }])
+      }
+    } else {
+      showError('配置失败', '没能写入配置。常见原因：没有权限、磁盘满、或杀毒软件拦截。请用管理员身份重开本程序再试。', (r && r.error))
+    }
+  } catch (e) {
+    showError('配置出错', '配置过程中程序报错了。请把下面这段完整报错发给我们排查：', (e && e.message) || e)
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = oldTxt }
+  }
+}
+
+// ─── 渲染模型（按工具，渲染进该卡的 #modelList-<tool>）────────────────────────
+function renderModels(tool) {
+  const list = document.getElementById('modelList-' + tool)
+  if (!list) return
+  const conf = state[tool]
+  if (!state.keyValid) {
+    list.innerHTML = `<div class="model-lock">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      填写并验证 API Key 后，<br>即可选择模型与渠道
+    </div>`
+    return
+  }
+  if (!state.groups.length) { list.innerHTML = '<div class="loading">暂无可用模型</div>'; return }
+  list.innerHTML = ''
+
+  // Fusion 仅 Codex 可用（走 /responses 拦截；Claude 走 /messages 不支持）
+  const FUSION = 'onlyrouter-fusion'
+  if (TOOLS[tool].fusion) {
+    const fsel = conf.model === FUSION
+    const fe = fusionEstimate()
+    const fprice = fe ? `预估 入~<b>${fmt(fe.input)}</b>·出~<b>${fmt(fe.output)}</b>/M` : '难题质量约 +5–10%'
+    const fg = document.createElement('div')
+    fg.className = 'mgroup fusion-row' + (fsel ? ' has-selected' : '')
+    fg.innerHTML = `<div class="mgroup-head">
+      <span class="mg-name">✨ Fusion 融合款</span>
+      <span class="mg-badge bg-hot">最强</span>
+      <span class="mg-meta">${fsel ? '<span class="mg-sel">已选</span>' : `<span class="mg-low">${fprice}</span>`}<span class="mg-arrow" style="visibility:hidden">&#9662;</span></span>
+    </div>`
+    fg.addEventListener('click', () => { conf.model = FUSION; saveState(); renderModels(tool) })
+    list.appendChild(fg)
+  }
+
+  const visible = state.groups
+  visible.forEach(g => {
+    const selectedHere = g.channels.find(c => c.name === conf.model)
+    const isOpen = conf.expanded.has(g.base) || !!selectedHere
+    const badge = BADGES[g.base]
+    const group = document.createElement('div')
+    group.className = 'mgroup' + (isOpen ? ' open' : '') + (selectedHere ? ' has-selected' : '')
+    const head = document.createElement('div')
+    head.className = 'mgroup-head'
+    const selMeta = selectedHere ? CH_META[selectedHere.ch] : null
+    head.innerHTML = `
+      <span class="mg-name">${g.base}</span>
+      ${badge ? `<span class="mg-badge ${badge.c}">${badge.t}</span>` : ''}
+      <span class="mg-meta">
+        ${selectedHere
+          ? `<span class="mg-sel">已选 · ${selMeta.label}</span>`
+          : `<span class="mg-low">低至 <b>${fmt(g.minInput)}</b>/M</span><span class="mg-count">${g.channels.length} 渠道</span>`}
+        <span class="mg-arrow">&#9662;</span>
+      </span>`
+    head.addEventListener('click', () => {
+      if (conf.expanded.has(g.base)) conf.expanded.delete(g.base)
+      else conf.expanded.add(g.base)
+      renderModels(tool)
+    })
+    group.appendChild(head)
+    const body = document.createElement('div')
+    body.className = 'mgroup-body'
+    g.channels.forEach(c => {
+      const meta = CH_META[c.ch]
+      const row = document.createElement('div')
+      row.className = 'chrow' + (c.name === conf.model ? ' sel' : '')
+      row.innerHTML = `
+        <span class="ch-radio"></span>
+        <span class="ch-name">${meta.label}</span>
+        <span class="ch-tag ${meta.cls}">${meta.tag}</span>
+        <span class="ch-price">入 <b>${fmt(c.input_price)}</b> · 出 <b>${fmt(c.output_price)}</b> /M</span>`
+      row.addEventListener('click', e => {
+        e.stopPropagation()
+        conf.model = c.name
+        conf.expanded.add(g.base)
+        saveState()
+        renderModels(tool)
+      })
+      body.appendChild(row)
+    })
+    group.appendChild(body)
+    list.appendChild(group)
+  })
+}
+
+// ─── 安装状态检测 ────────────────────────────────────────────────
+// Codex 可作 App 也可作 CLI：两者都没装才算「未安装」。Claude 只有 CLI。
+async function refreshInstallStatus() {
+  if (!window.api || !window.api.checkInstall) return
+  try {
+    const [app, cliC, cliCl] = await Promise.all([
+      window.api.checkInstall('codex-app'),
+      window.api.checkInstall('codex-cli'),
+      window.api.checkInstall('claude-cli'),
+    ])
+    state.codexInstalled = !!((app && app.installed) || (cliC && cliC.installed))
+    state.claudeInstalled = !!(cliCl && cliCl.installed)
+  } catch {
+    // 检测失败不阻断使用：保持 null（不因未装而禁用按钮）
+    state.codexInstalled = null
+    state.claudeInstalled = null
+  }
+  updateUI()
+}
+
+// ─── 状态显示 ────────────────────────────────────────────────────
+function updateUI() {
+  setStatus('dot-codex', 'lbl-codex', state.codexConfigured, state.codexConfigured ? '已配置' : '未配置')
+  setStatus('dot-claude', 'lbl-claude', state.claudeConfigured, state.claudeConfigured ? '已配置' : '未配置')
+
+  // 配置按钮禁用条件：① 未验证 Key；② 已确认未安装该工具（installed===false；null=检测中不禁用）
+  for (const tool of TOOL_ORDER) {
+    const b = document.getElementById('btnConfig-' + tool)
+    if (!b) continue
+    const installed = state[tool + 'Installed']
+    const notInstalled = installed === false
+    b.disabled = !state.keyValid || notInstalled
+    // 未安装：按钮直接提示「未安装」，避免小白点了没反应还以为坏了
+    if (notInstalled) b.textContent = `未安装 ${TOOLS[tool].name}，无法配置`
+    else if (b.textContent.startsWith('未安装')) b.textContent = '一键配置'
+  }
+
+  // 输入框 + 保存按钮：已锁定显示「修改」
+  const keyInput = document.getElementById('keyInput'), btn = document.getElementById('btnSaveKey')
+  keyInput.readOnly = state.keyLocked
+  keyInput.className = 'key-input' + (state.keyValid ? ' valid' : '') + (state.keyLocked ? ' locked' : '')
+  if (!btn.classList.contains('checking')) btn.textContent = state.keyLocked ? '修改' : '验证并保存'
+
+  renderModels('codex'); renderModels('claude')
+}
+
+// ─── 加载模型 ────────────────────────────────────────────────────
+async function loadModels() {
+  const res = await window.api.fetchModels()
+  const srcBadge = document.getElementById('srcBadge'), srcText = document.getElementById('srcText')
+  if (res.ok && res.models.length) {
+    state.groups = groupModels(res.models)
+    state.modelsRaw = res.models
+    const names = res.models.map(m => m.name)
+    const FUSION = 'onlyrouter-fusion'
+    // 校验各工具已存模型是否仍存在；不存在则回退到合理默认（Codex 用首个；Claude 用首个 Claude -ab）
+    const firstClaude = (names.find(n => /claude/i.test(n) && /-ab$/i.test(n))) || names[0]
+    const firstAny = (state.groups[0] && state.groups[0].channels[0] && state.groups[0].channels[0].name) || names[0]
+    if (state.codex.model !== FUSION && !names.includes(state.codex.model)) state.codex.model = firstAny
+    if (state.claude.model !== FUSION && !names.includes(state.claude.model)) state.claude.model = firstClaude
+    if (res.source === 'live') { srcBadge.className = 'right live'; srcText.textContent = '实时价格' }
+    else { srcBadge.className = 'right'; srcText.textContent = '本地缓存价格' }
+  } else {
+    srcText.textContent = '加载失败'
+  }
+  renderModels('codex'); renderModels('claude')
+}
+
+// ─── 检测配置状态 ────────────────────────────────────────────────
+async function refreshStatus() {
+  const [codexCfg, claudeCfg] = await Promise.all([
+    window.api.readCodexModel(),
+    window.api.checkClaudeConfigured(),
+  ])
+  state.codexConfigured = codexCfg.configured
+  state.claudeConfigured = claudeCfg.configured
+  updateUI()
+}
+
+// ─── 持久化 ─────────────────────────────────────────────────────
+async function loadState() {
+  const cfg = await window.api.getConfig()
+  if (cfg.key) { state.key = cfg.key; document.getElementById('keyInput').value = cfg.key }
+  // 按工具读取；兼容旧扁平 { model, smartMode, securityMode }（迁移为两工具同值）
+  const flat = { model: cfg.model, smartMode: !!cfg.smartMode, securityMode: !!cfg.securityMode }
+  const pick = (sub, dft) => {
+    const s = (sub && typeof sub === 'object') ? sub : flat
+    return {
+      model: s.model || dft,
+      smartMode: !!s.smartMode,
+      securityMode: !!s.securityMode,
+      expanded: new Set(), showAll: false,   // 运行态：模型选择器展开状态
+    }
+  }
+  state.codex = pick(cfg.codex, 'gpt-5.5')
+  state.claude = pick(cfg.claude, 'claude-opus-4-8-ab')
+}
+
+// 反映某工具某开关的视觉状态（开关勾选 + 卡片高亮 + 模型区锁定）
+function reflectMode(tool, which) {
+  const conf = state[tool]
+  const on = which === 'smart' ? conf.smartMode : conf.securityMode
+  const optrow = document.getElementById(`opt-${which}-${tool}`)
+  const sw = document.getElementById(`sw-${which}-${tool}`)
+  if (!optrow || !sw) return
+  sw.checked = on
+  optrow.classList.toggle('on', on)
+  // 智能模式开启 → 锁定该工具卡的模型选择
+  if (which === 'smart') {
+    const ms = document.getElementById('modelSection-' + tool)
+    if (ms) ms.classList.toggle('locked', on)
+  }
+}
+function reflectAll() {
+  for (const tool of TOOL_ORDER) { reflectMode(tool, 'smart'); reflectMode(tool, 'sec') }
+}
+// 绑定两张卡的开关 change + 详情展开（点信息区切换 .on 显示详情）
+function initModes() {
+  for (const tool of TOOL_ORDER) {
+    const tn = TOOLS[tool].name
+    const swSmart = document.getElementById(`sw-smart-${tool}`)
+    const swSec = document.getElementById(`sw-sec-${tool}`)
+    if (swSmart) swSmart.addEventListener('change', e => {
+      state[tool].smartMode = e.target.checked; saveState(); reflectMode(tool, 'smart')
+      toast(e.target.checked ? `已为 ${tn} 开启智能路由` : `已为 ${tn} 关闭智能路由`)
+    })
+    if (swSec) swSec.addEventListener('change', e => {
+      state[tool].securityMode = e.target.checked; saveState(); reflectMode(tool, 'sec')
+      toast(e.target.checked ? `已为 ${tn} 开启安全网关` : `已为 ${tn} 关闭安全网关`)
+    })
+    // 点开关行的信息区：展开/收起详情（不影响开关本身）
+    document.querySelectorAll(`#opt-smart-${tool} .optrow-info, #opt-sec-${tool} .optrow-info`).forEach(info => {
+      info.addEventListener('click', () => info.closest('.optrow').classList.toggle('on'))
+    })
+  }
+  reflectAll()
+}
+function saveState() {
+  // 持久化按工具分组（含 key）；旧扁平字段不再写，loadState 会做兼容迁移
+  window.api.saveConfig({ key: state.key, codex: persistConf(state.codex), claude: persistConf(state.claude) })
+  updateUI()
+}
+// 持久化时剥掉运行态字段（expanded 是 Set，不可序列化）
+function persistConf(c) { return { model: c.model, smartMode: c.smartMode, securityMode: c.securityMode } }
+
+// ─── 生成面板 ─────────────────────────────────────────────────────
+const gen = { tab: 'text', models: { text: [], image: [], video: [] }, busy: false }
+
+// 视图定义（左侧导航栏数据驱动；加新视图只需在此加一项 + 对应 #view<Id> 容器）
+const VIEWS = [
+  { id: 'config', ico: '⚙️', label: '配置工具', el: 'viewConfig' },
+  { id: 'gen',    ico: '✨', label: '生成内容', el: 'viewGen' },
+]
+let activeView = 'config'
+
+function renderNav() {
+  const rail = document.getElementById('navRail')
+  if (!rail) return
+  rail.innerHTML = ''
+  VIEWS.forEach(v => {
+    const item = document.createElement('div')
+    item.className = 'nav-item' + (v.id === activeView ? ' on' : '')
+    item.dataset.view = v.id
+    item.innerHTML = `<span class="nav-ico">${v.ico}</span><span class="nav-lbl">${v.label}</span>`
+    item.addEventListener('click', () => switchView(v.id))
+    rail.appendChild(item)
+  })
+}
+
+function switchView(view) {
+  activeView = view
+  document.querySelectorAll('.nav-item').forEach(t => t.classList.toggle('on', t.dataset.view === view))
+  VIEWS.forEach(v => { const el = document.getElementById(v.el); if (el) el.style.display = v.id === view ? '' : 'none' })
+  document.getElementById('contentScroll').scrollTop = 0   // 切视图回到顶部
+  if (view === 'gen') refreshGen()
+}
+
+function refreshGen() {
+  const hasKey = !!state.keyValid
+  document.getElementById('genNoKey').style.display = hasKey ? 'none' : 'block'
+  document.getElementById('genForm').style.display = hasKey ? 'block' : 'none'
+  if (hasKey) renderGenModels()
+}
+
+async function loadGenModels() {
+  try {
+    const r = await window.api.fetchModelsAll()
+    if (r.ok) {
+      gen.models.text = r.models.filter(m => m.model_type === 'text')
+      gen.models.image = r.models.filter(m => m.model_type === 'image')
+      gen.models.video = r.models.filter(m => m.model_type === 'video')
+    }
+  } catch (_) {}
+}
+
+function renderGenModels() {
+  const sel = document.getElementById('genModel')
+  const list = gen.models[gen.tab] || []
+  sel.innerHTML = list.length
+    ? list.map(m => `<option value="${m.name}">${m.display_name || m.name}</option>`).join('')
+    : '<option value="">（暂无可用模型）</option>'
+  updateGenForm()
+}
+
+// 各模型尺寸约束（playground 已踩平）
+function sizeOptionsFor(name) {
+  const n = (name || '').toLowerCase()
+  if (n.includes('seedream') && n.includes('4-5')) return ['2560x1440', '1440x2560', '2048x2048']
+  if (n.includes('seedream')) return ['1024x1024', '2048x2048', '2560x1440', '1440x2560']
+  if (n.includes('qwen') || n.includes('wan')) return ['1328x1328', '1024x1024']
+  if (n.includes('gpt-image')) return ['1024x1024', '1536x1024', '1024x1536']
+  return ['1024x1024', '1536x1024', '1024x1536']
+}
+// 视频分辨率约束（per model）
+function resOptionsFor(name) {
+  const n = (name || '').toLowerCase()
+  if (n.includes('seedance') && n.includes('fast')) return ['480p', '720p']
+  if (n.includes('seedance')) return ['720p', '1080p']
+  if (n.includes('sora')) return ['720p', '1080p']
+  return ['720p', '1080p']
+}
+// 视频时长档（秒，per model）
+function durOptionsFor(name) {
+  const n = (name || '').toLowerCase()
+  if (n.includes('sora')) return [4, 8, 12]
+  return [5, 8, 10] // 豆包 / Seedance
+}
+
+function updateGenForm() {
+  const isImg = gen.tab === 'image', isVid = gen.tab === 'video'
+  const model = document.getElementById('genModel').value
+  document.getElementById('genSizeWrap').style.display = isImg ? 'block' : 'none'
+  document.getElementById('genVidWrap').style.display = isVid ? 'block' : 'none'
+  const lbl = document.getElementById('genPromptLabel')
+  const pr = document.getElementById('genPrompt')
+  if (gen.tab === 'text') { lbl.textContent = '你想问什么 / 让 AI 写什么'; pr.placeholder = '例如：用三句话解释什么是区块链' }
+  else if (isImg) { lbl.textContent = '描述你想要的图片'; pr.placeholder = '例如：一只戴着宇航员头盔的橘猫，扁平插画风' }
+  else { lbl.textContent = '描述你想要的视频'; pr.placeholder = '例如：海浪拍打礁石，慢镜头，金色夕阳' }
+  if (isImg) {
+    document.getElementById('genSize').innerHTML = sizeOptionsFor(model).map(s => `<option>${s}</option>`).join('')
+    document.getElementById('genSizeHint').textContent = '不同模型支持的尺寸不同，已自动为该模型筛选可用项。'
+  }
+  if (isVid) {
+    document.getElementById('genRes').innerHTML = resOptionsFor(model).map(s => `<option>${s}</option>`).join('')
+    document.getElementById('genDur').innerHTML = durOptionsFor(model).map(s => `<option value="${s}">${s} 秒</option>`).join('')
+  }
+  document.getElementById('genGo').textContent = isVid ? '开始生成（约需数十秒到几分钟）' : '开始生成'
+}
+
+function setGenStatus(msg) {
+  const el = document.getElementById('genStatus')
+  if (!msg) { el.style.display = 'none'; return }
+  el.style.display = 'flex'
+  el.innerHTML = '<span class="spin"></span>' + escapeHtml(msg)
+}
+function setGenOut(html) { document.getElementById('genOut').innerHTML = html }
+
+async function runGen() {
+  if (gen.busy) return
+  const model = document.getElementById('genModel').value
+  const prompt = document.getElementById('genPrompt').value.trim()
+  if (!model) { showError('没有可用模型', '当前类型下没有可用的模型，请稍后重试或换一个类型。'); return }
+  if (!prompt) { toast('请先填写描述'); return }
+  gen.busy = true
+  document.getElementById('genGo').disabled = true
+  setGenOut('<div class="ph">正在生成…</div>')
+  try {
+    if (gen.tab === 'text') await genText(model, prompt)
+    else if (gen.tab === 'image') await genImage(model, prompt, document.getElementById('genSize').value)
+    else await genVideo(model, prompt)
+  } catch (e) {
+    setGenOut('<div class="ph">生成失败</div>')
+    showError('生成失败', '请把下面这段完整报错发给我们排查：', (e && e.message) || e)
+  } finally {
+    gen.busy = false
+    document.getElementById('genGo').disabled = false
+    setGenStatus('')
+  }
+}
+
+async function genText(model, prompt) {
+  setGenStatus('AI 正在思考…')
+  const r = await window.api.apiCall('POST', '/chat/completions', { model, messages: [{ role: 'user', content: prompt }] })
+  if (!r.ok) { setGenOut('<div class="ph">生成失败</div>'); showError('生成失败', '服务返回了错误：', r.error); return }
+  const txt = (((r.json.choices || [])[0] || {}).message || {}).content || '(无内容)'
+  setGenOut('<div class="txt">' + escapeHtml(txt) + '</div>')
+}
+
+async function genImage(model, prompt, size) {
+  setGenStatus('正在画图，请稍候…')
+  const body = { model, prompt, n: 1 }
+  if (size) body.size = size
+  const r = await window.api.apiCall('POST', '/images/generations', body)
+  if (!r.ok) { setGenOut('<div class="ph">生成失败</div>'); showError('生成失败', '服务返回了错误（常见原因：该模型不支持所选尺寸，换个尺寸试试）：', r.error); return }
+  const d = (r.json.data || [])[0] || {}
+  const src = d.url || (d.b64_json ? 'data:image/png;base64,' + d.b64_json : null)
+  if (!src) { setGenOut('<div class="ph">没有取到图片</div>'); return }
+  setGenOut('<img src="' + src + '" alt="生成的图片"><a class="gen-dl" href="' + src + '" download="onlyrouter-image.png">下载图片</a>')
+}
+
+async function genVideo(model, prompt) {
+  setGenStatus('正在提交视频任务…')
+  const resolution = document.getElementById('genRes').value
+  const seconds = Number(document.getElementById('genDur').value) || undefined
+  const body = { model, prompt, mode: 'text-to-video' }
+  if (resolution) body.resolution = resolution
+  if (seconds) body.seconds = seconds
+  const sub = await window.api.apiCall('POST', '/videos', body)
+  if (!sub.ok) { setGenOut('<div class="ph">提交失败</div>'); showError('提交失败', '服务返回了错误：', sub.error); return }
+  const id = sub.json.id || sub.json.task_id || (sub.json.data && sub.json.data.id)
+  if (!id) { setGenOut('<div class="ph">未取到任务 ID</div>'); showError('未取到任务 ID', '提交成功但响应里没有任务 ID，原始响应：', JSON.stringify(sub.json).slice(0, 500)); return }
+
+  // 严格轮询：必须等 status 变 completed/succeeded 才取流（提前取会 404 "not ready"）
+  const t0 = Date.now(), el = () => Math.round((Date.now() - t0) / 1000)
+  let fileId = null, done = false
+  while (el() < 600) {
+    await new Promise(r => setTimeout(r, 4000))
+    const pr = await window.api.apiCall('GET', '/videos/' + id)
+    if (!pr.ok) { setGenStatus('查询任务中…（已等待 ' + el() + ' 秒）'); continue }
+    const st = (pr.json.status || '').toLowerCase()
+    if (st === 'completed' || st === 'succeeded') { fileId = pr.json.result_file_id || null; done = true; break }
+    if (st === 'failed' || st === 'error' || pr.json.error) {
+      setGenOut('<div class="ph">生成失败</div>'); showError('视频生成失败', '上游返回任务失败：', JSON.stringify(pr.json.error || pr.json).slice(0, 500)); return
+    }
+    setGenStatus('视频生成中…状态：' + (st || 'processing') + '（已等待 ' + el() + ' 秒，通常数十秒到几分钟）')
+  }
+  if (!done) { setGenOut('<div class="ph">超时</div>'); showError('生成超时', '等待超过 10 分钟仍未完成。任务 ID：' + id + '，可稍后用此 ID 取回。'); return }
+
+  // 取流：先试 /videos/{id}/content，再试 /files/{fileId}/content
+  setGenStatus('正在取视频…')
+  let g = await window.api.apiGrab('/v1/videos/' + id + '/content')
+  if (!g.ok && fileId) g = await window.api.apiGrab('/v1/files/' + fileId + '/content')
+  if (!g.ok) { setGenOut('<div class="ph">取视频失败</div>'); showError('取视频失败', '视频已生成但拉取失败（任务 ID：' + id + '）：', g.error); return }
+  setGenOut('<video src="' + g.url + '" controls autoplay loop muted></video><a class="gen-dl" href="' + g.url + '" download="onlyrouter-video.mp4">下载视频</a>')
+}
+
+function initGen() {
+  document.querySelectorAll('.gen-tab').forEach(t => t.addEventListener('click', () => {
+    gen.tab = t.dataset.gen
+    document.querySelectorAll('.gen-tab').forEach(x => x.classList.toggle('on', x === t))
+    setGenOut('<div class="ph">生成结果会显示在这里</div>'); setGenStatus('')
+    renderGenModels()
+  }))
+  document.getElementById('genModel').addEventListener('change', updateGenForm)
+  document.getElementById('genGo').addEventListener('click', runGen)
+}
+
+// ─── 入口 ───────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  updateUI()
+  if (!window.api) return
+
+  // 首次关窗最小化到托盘的一次性提示（小白不知道关窗≠退出，代理仍在后台跑）
+  if (window.api.onTrayHint) window.api.onTrayHint(() => {
+    showDialog('已最小化到托盘 🟢',
+      'Switch 没有退出，<b>本地代理还在后台运行</b>——这样你的 <b>codex</b> 和 <b>claude</b> 随时都能用。<br><br>想再打开本窗口：点屏幕<b>顶栏/任务栏托盘里的 OnlyRouter 图标</b>。<br>想彻底退出：在托盘图标上点「<b>退出</b>」。',
+      '🟢')
+  })
+
+  await loadState()
+  renderNav()         // 左侧导航栏
+  renderToolCards()   // 先建两张卡的 DOM（含模型容器/开关/按钮），后续渲染才有目标
+  updateUI()
+  initModes()
+  initGen()
+  await loadModels()
+  await loadGenModels()
+  await refreshStatus()
+  await refreshInstallStatus()   // 检测 Codex/Claude 是否安装，未装则禁用对应「配置」按钮
+  // 用户可能切出去装 Codex/Claude 再切回来——窗口重获焦点时重新检测，装好后按钮自动解禁
+  window.addEventListener('focus', () => { refreshInstallStatus() })
+
+  // 已保存的 Key：后台静默校验
+  if (state.key) {
+    const ks = document.getElementById('keyStatus')
+    ks.className = 'key-status checking'; ks.textContent = '正在验证已保存的 Key…'
+    window.api.validateKey(state.key).then(r => {
+      state.keyValid = !!r.valid
+      state.keyLocked = !!r.valid
+      if (r.valid) { ks.className = 'key-status ok'; ks.textContent = 'API Key 已验证' }
+      else { ks.className = 'key-status err'; ks.textContent = (r.reason || '校验失败') + '，请重新验证' }
+      updateUI()
+    })
+  }
+
+  // 验证并保存
+  async function handleSaveKey() {
+    const val = document.getElementById('keyInput').value.trim()
+    const ks = document.getElementById('keyStatus'), btn = document.getElementById('btnSaveKey')
+    if (!val.startsWith('sk-')) { ks.className = 'key-status err'; ks.textContent = '格式错误，应以 sk- 开头'; return }
+    btn.disabled = true; btn.classList.add('checking'); btn.textContent = '验证中…'
+    ks.className = 'key-status checking'; ks.textContent = '正在验证…'
+    const r = await window.api.validateKey(val)
+    btn.disabled = false; btn.classList.remove('checking'); btn.textContent = '验证并保存'
+    if (r.valid) {
+      state.key = val; state.keyValid = true; state.keyLocked = true; saveState()
+      ks.className = 'key-status ok'; ks.textContent = '验证通过，已保存'
+      toast('API Key 验证通过')
+    } else {
+      state.keyValid = false; state.keyLocked = false; updateUI()
+      ks.className = 'key-status err'; ks.textContent = r.reason || '验证失败'
+    }
+  }
+  document.getElementById('btnSaveKey').addEventListener('click', () => {
+    if (state.keyLocked) {
+      state.keyLocked = false; updateUI()
+      const ki = document.getElementById('keyInput')
+      ki.readOnly = false; ki.focus(); ki.select()
+      const ks = document.getElementById('keyStatus')
+      ks.className = 'key-status'; ks.textContent = '可重新编辑，修改后请再次验证'
+    } else handleSaveKey()
+  })
+  document.getElementById('keyInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !state.keyLocked) handleSaveKey()
+  })
+
+  // 对话框关闭
+  document.getElementById('mOk').addEventListener('click', () => document.getElementById('modalMask').classList.remove('show'))
+
+  // 外链
+  const open = u => () => window.api.openUrl(u)
+  document.getElementById('linkConsole').addEventListener('click', open('https://onlyrouter.ai'))
+  document.getElementById('linkOnlyRouter').addEventListener('click', open('https://onlyrouter.ai'))
+  document.getElementById('linkDocs').addEventListener('click', open('https://onlyrouter.ai/docs'))
+})
+</script>
+</body>
+</html>

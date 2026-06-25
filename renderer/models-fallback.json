@@ -1,0 +1,266 @@
+[
+{
+"name": "gpt-5.5",
+"display_name": "GPT-5.5",
+"input_price": 5.0,
+"output_price": 30.0,
+"cache_read_price": 0.5,
+"context_window": 1050000
+},
+{
+"name": "gpt-5.4",
+"display_name": "GPT-5.4",
+"input_price": 2.5,
+"output_price": 15.0,
+"cache_read_price": 0.25,
+"context_window": 1050000
+},
+{
+"name": "gpt-5.4-mini",
+"display_name": "GPT-5.4 mini",
+"input_price": 0.75,
+"output_price": 4.5,
+"cache_read_price": 0.075,
+"context_window": 400000
+},
+{
+"name": "deepseek-v4-pro",
+"display_name": "DeepSeek V4 Pro",
+"input_price": 0.44,
+"output_price": 0.88,
+"cache_read_price": 0.004,
+"context_window": 1000000
+},
+{
+"name": "deepseek-v4-flash",
+"display_name": "DeepSeek V4 Flash",
+"input_price": 0.15,
+"output_price": 0.29,
+"cache_read_price": 0.003,
+"context_window": 1000000
+},
+{
+"name": "kimi-k2.6",
+"display_name": "Kimi K2.6 (Gonka)",
+"input_price": 0.001,
+"output_price": 0.001,
+"cache_read_price": null,
+"context_window": 128000
+},
+{
+"name": "glm-5.1",
+"display_name": "GLM 5.1",
+"input_price": 0.825,
+"output_price": 3.301,
+"cache_read_price": 0.165,
+"context_window": 202000
+},
+{
+"name": "qwen3.7-max",
+"display_name": "Qwen3.7 Max",
+"input_price": 0.825,
+"output_price": 2.4755,
+"cache_read_price": null,
+"context_window": 1000000
+},
+{
+"name": "qwen3.6-plus",
+"display_name": "Qwen3.6 Plus",
+"input_price": 0.276,
+"output_price": 1.651,
+"cache_read_price": null,
+"context_window": 1000000
+},
+{
+"name": "qwen3.6-max-preview",
+"display_name": "Qwen3.6 Max Preview",
+"input_price": 1.238,
+"output_price": 7.426,
+"cache_read_price": null,
+"context_window": 256000
+},
+{
+"name": "qwen3.6-flash",
+"display_name": "Qwen3.6 Flash",
+"input_price": 0.165,
+"output_price": 0.99,
+"cache_read_price": null,
+"context_window": 1000000
+},
+{
+"name": "MiniMax-M2.5",
+"display_name": "MiniMax M2.5",
+"input_price": 0.304,
+"output_price": 1.213,
+"cache_read_price": 0.061,
+"context_window": 200000
+},
+{
+"name": "kimi-k2.7-code",
+"display_name": "Kimi K2.7 Code",
+"input_price": 0.8939,
+"output_price": 3.7131,
+"cache_read_price": 0.0894,
+"context_window": 256000
+},
+{
+"name": "glm-5.2",
+"display_name": "GLM-5.2",
+"input_price": 1.4,
+"output_price": 4.4,
+"cache_read_price": 0.26,
+"context_window": 1000000
+},
+{
+"name": "minimax-m3",
+"display_name": "MiniMax M3",
+"input_price": 0.3,
+"output_price": 1.2,
+"cache_read_price": 0.06,
+"context_window": 1000000
+},
+{
+"name": "claude-opus-4-8-openrouter",
+"display_name": "Claude Opus 4.8 (OpenRouter)",
+"input_price": 5.0,
+"output_price": 25.0,
+"cache_read_price": 0.5,
+"context_window": 1000000
+},
+{
+"name": "claude-opus-4-7-openrouter",
+"display_name": "Claude Opus 4.7 (OpenRouter)",
+"input_price": 5.0,
+"output_price": 25.0,
+"cache_read_price": 0.5,
+"context_window": 1000000
+},
+{
+"name": "claude-opus-4-6-openrouter",
+"display_name": "Claude Opus 4.6 (OpenRouter)",
+"input_price": 5.0,
+"output_price": 25.0,
+"cache_read_price": 0.5,
+"context_window": 1000000
+},
+{
+"name": "claude-sonnet-4-6-openrouter",
+"display_name": "Claude Sonnet 4.6 (OpenRouter)",
+"input_price": 3.0,
+"output_price": 15.0,
+"cache_read_price": 0.3,
+"context_window": 1000000
+},
+{
+"name": "claude-sonnet-4-5-openrouter",
+"display_name": "Claude Sonnet 4.5 (OpenRouter)",
+"input_price": 3.0,
+"output_price": 15.0,
+"cache_read_price": 0.3,
+"context_window": 1000000
+},
+{
+"name": "claude-sonnet-4-openrouter",
+"display_name": "Claude Sonnet 4 (OpenRouter)",
+"input_price": 3.0,
+"output_price": 15.0,
+"cache_read_price": 0.3,
+"context_window": 1000000
+},
+{
+"name": "claude-haiku-4-5-openrouter",
+"display_name": "Claude Haiku 4.5 (OpenRouter)",
+"input_price": 1.0,
+"output_price": 5.0,
+"cache_read_price": 0.1,
+"context_window": 200000
+},
+{
+"name": "gpt-5.5-openrouter",
+"display_name": "GPT-5.5 (OpenRouter)",
+"input_price": 5.0,
+"output_price": 30.0,
+"cache_read_price": 0.5,
+"context_window": 1050000
+},
+{
+"name": "gpt-5.4-openrouter",
+"display_name": "GPT-5.4 (OpenRouter)",
+"input_price": 2.5,
+"output_price": 15.0,
+"cache_read_price": 0.25,
+"context_window": 1050000
+},
+{
+"name": "gpt-5.4-mini-openrouter",
+"display_name": "GPT-5.4 mini (OpenRouter)",
+"input_price": 0.75,
+"output_price": 4.5,
+"cache_read_price": 0.075,
+"context_window": 400000
+},
+{
+"name": "claude-opus-4-8-ab",
+"display_name": "Claude Opus 4.8 (AB kiro)",
+"input_price": 0.736,
+"output_price": 3.678,
+"cache_read_price": 0.074,
+"context_window": 1000000
+},
+{
+"name": "claude-opus-4-7-ab",
+"display_name": "Claude Opus 4.7 (AB kiro)",
+"input_price": 0.736,
+"output_price": 3.678,
+"cache_read_price": 0.074,
+"context_window": 1000000
+},
+{
+"name": "claude-opus-4-6-ab",
+"display_name": "Claude Opus 4.6 (AB kiro)",
+"input_price": 0.736,
+"output_price": 3.678,
+"cache_read_price": 0.074,
+"context_window": 1000000
+},
+{
+"name": "claude-sonnet-4-5-ab",
+"display_name": "Claude Sonnet 4.5 (AB kiro)",
+"input_price": 0.441,
+"output_price": 2.207,
+"cache_read_price": 0.044,
+"context_window": 1000000
+},
+{
+"name": "claude-sonnet-4-6-ab",
+"display_name": "Claude Sonnet 4.6 (AB kiro)",
+"input_price": 0.441,
+"output_price": 2.207,
+"cache_read_price": 0.044,
+"context_window": 1000000
+},
+{
+"name": "gpt-5.5-ab",
+"display_name": "GPT-5.5 (AB)",
+"input_price": 0.5,
+"output_price": 4.0,
+"cache_read_price": 0.05,
+"context_window": 1050000
+},
+{
+"name": "gpt-5.4-ab",
+"display_name": "GPT-5.4 (AB)",
+"input_price": 0.25,
+"output_price": 1.5,
+"cache_read_price": 0.025,
+"context_window": 1050000
+},
+{
+"name": "gpt-5.4-mini-ab",
+"display_name": "GPT-5.4 mini (AB)",
+"input_price": 0.075,
+"output_price": 0.45,
+"cache_read_price": 0.008,
+"context_window": 400000
+}
+]

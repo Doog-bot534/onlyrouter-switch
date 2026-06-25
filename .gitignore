@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out/
+.DS_Store
+*.log
+
+# macOS AppleDouble 资源文件
+._*
+
+# 运行时用户配置（含 API Key，绝不入库）
+config.json
+*.local
