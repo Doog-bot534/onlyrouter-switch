@@ -1103,6 +1103,108 @@ async function passthrough(req, res, body, upstream, auth, path) {
   }
 }
 
+// VS Code 客户端（Continue 等）走原生 OpenAI /v1/chat/completions。
+// 与裸 passthrough 的区别：① 流式真透传（不缓冲，否则聊天要等全部生成完才显示）；
+// ② 智能路由可选（直接对 chat body 选模型）；③ 安全脱敏可选（出站 messages 脱敏 / 入站增量还原）。
+async function handleChat(req, res, body, upstream, auth, options) {
+  options = options || {}
+  let parsed
+  try { parsed = JSON.parse(body.toString('utf8')) } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' })
+    return res.end(JSON.stringify({ error: { message: 'invalid JSON body' } }))
+  }
+  const wantStream = !!parsed.stream
+
+  // 智能路由：对 chat messages 自主选模型（忽略客户端所选）
+  if (options.smartRouting) {
+    try {
+      const models = await getModels()
+      const d = router.decide(parsed.messages || [], parsed.model, models, { learner: options.learner })
+      if (d.model) parsed.model = d.model
+    } catch {}
+  }
+
+  // 安全网关·出站：把 messages 里的密钥/PII 脱敏（可逆占位符），响应回来再按 store 还原
+  let store = null
+  if (options.security && Array.isArray(parsed.messages)) {
+    try {
+      store = security.makeStore()
+      redactMessages(parsed.messages, store)
+    } catch { store = null }
+  }
+  const restore = store ? (s => security.restore(s, store)) : null
+
+  let upstreamRes
+  try {
+    upstreamRes = await fetch(upstream + '/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: auth, Accept: wantStream ? 'text/event-stream' : 'application/json' },
+      body: JSON.stringify(parsed),
+    })
+  } catch (e) {
+    res.writeHead(502, { 'Content-Type': 'application/json' })
+    return res.end(JSON.stringify({ error: { message: 'upstream unreachable: ' + (e && e.message) } }))
+  }
+
+  // 非流式：缓冲整体，安全开启时还原响应文本
+  if (!wantStream || !upstreamRes.body) {
+    const txt = await upstreamRes.text()
+    let out = txt
+    if (restore && upstreamRes.ok) {
+      try {
+        const j = JSON.parse(txt)
+        for (const ch of (j.choices || [])) {
+          if (ch.message && typeof ch.message.content === 'string') ch.message.content = restore(ch.message.content)
+        }
+        out = JSON.stringify(j)
+      } catch {}
+    }
+    res.writeHead(upstreamRes.status, { 'Content-Type': upstreamRes.headers.get('content-type') || 'application/json' })
+    return res.end(out)
+  }
+
+  // 流式：逐块转发。安全开启时对 delta.content 做还原（跨 chunk 按行缓冲）
+  res.writeHead(upstreamRes.status, {
+    'Content-Type': upstreamRes.headers.get('content-type') || 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache', Connection: 'keep-alive',
+  })
+  if (!restore) {
+    try { for await (const part of upstreamRes.body) res.write(part) } catch {}
+    return res.end()
+  }
+  const decoder = new TextDecoder()
+  let buf = ''
+  function rewriteLine(line) {
+    const t = line.trim()
+    if (!t.startsWith('data:')) return line
+    const payload = t.slice(5).trim()
+    if (payload === '[DONE]') return line
+    try {
+      const ev = JSON.parse(payload)
+      let touched = false
+      for (const ch of (ev.choices || [])) {
+        if (ch.delta && typeof ch.delta.content === 'string') { ch.delta.content = restore(ch.delta.content); touched = true }
+      }
+      if (touched) return 'data: ' + JSON.stringify(ev)
+    } catch {}
+    return line
+  }
+  try {
+    for await (const part of upstreamRes.body) {
+      buf += decoder.decode(part, { stream: true })
+      let nl
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl)
+        buf = buf.slice(nl + 1)
+        res.write(rewriteLine(line) + '\n')
+      }
+    }
+    if (buf) res.write(rewriteLine(buf))
+  } catch {}
+  res.end()
+}
+
+
 // Claude Code 走代理：/v1/messages 直通 OnlyRouter（同协议，不翻译），但保留流式真透传 + 入站投毒扫描。
 // 与 passthrough 的区别：流式逐块转发（不缓冲），安全开启时对文本增量跑 scanInbound。
 async function handleMessages(req, res, body, upstream, auth, options) {
@@ -1279,6 +1381,12 @@ function startGateway(opts = {}) {
       let options = {}
       try { options = getOptions('claude') || {} } catch {}
       return handleMessages(req, res, body, upstream, auth, options)
+    }
+    // VS Code（Continue 等）：/v1/chat/completions → 智能路由 + 安全脱敏 + 流式真透传
+    if (req.method === 'POST' && /\/chat\/completions$/.test(url.split('?')[0])) {
+      let options = {}
+      try { options = getOptions('vscode') || {} } catch {}
+      return handleChat(req, res, body, upstream, auth, options)
     }
     // /v1/models 等：原样透传
     const m = url.match(/\/v1(\/.*)$/)

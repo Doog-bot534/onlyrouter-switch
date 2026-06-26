@@ -114,8 +114,11 @@ npm run build        # mac + win 一起
 |------|---------|-----------|
 | Codex | `~/.codex/config.toml`（模型/渠道）+ 环境变量 `ONLYROUTER_API_KEY`（Key） | 仅**首次**创建环境变量需重开终端一次；之后网关接管鉴权，换 Key/模型免重启 |
 | Claude Code | `~/.claude/settings.json`（全部，含 Key/BaseURL/Model） | 永不需要，`claude` 每次启动都读该文件 |
+| VS Code | `~/.continue/config.yaml`（Continue 扩展，OpenAI 兼容 provider，apiBase 指向本地网关） | 永不需要，Continue 监听文件变更；偶尔需 Reload Window |
 
 用户运行时的 Key 存在 `app.getPath('userData')/config.json`，**不在仓库内**。
+
+> VS Code 走 **Continue** 扩展：它支持配置文件（不像 Cline/Roo 只能扩展内 UI 手填），所以能被一键写入，契合「填 Key → 一键配置」的小白卖点。请求经 `/v1/chat/completions` 进网关的 `handleChat`，享受智能路由 + 安全脱敏 + 流式真透传。
 
 ---
 

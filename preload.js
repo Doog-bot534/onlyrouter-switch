@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('api', {
   writeClaudeConfig: (key, model) => ipcRenderer.invoke('write-claude-config', { key, model }),
   checkClaudeConfigured: () => ipcRenderer.invoke('check-claude-configured'),
 
+  writeVscodeConfig: (key, model) => ipcRenderer.invoke('write-vscode-config', { key, model }),
+
   openUrl: (url) => ipcRenderer.invoke('open-url', url),
   openNodejs: () => ipcRenderer.invoke('open-nodejs'),
 

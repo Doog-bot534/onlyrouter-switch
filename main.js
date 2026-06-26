@@ -18,9 +18,10 @@ async function ensureGateway() {
       gatewayHandle = await startGateway({
         upstream: 'https://onlyrouter.ai/v1', port: 8788,
         // 按工具读取各自的开关与模型（codex 走 /responses，claude 走 /messages）。
-        // getOptions(tool) 由网关在两条路径分别调用，传入 'codex' / 'claude'。
+        // getOptions(tool) 由网关在三条路径分别调用，传入 'codex' / 'claude' / 'vscode'。
         getOptions: (tool) => {
-          const t = toolConfig(loadConfig(), tool === 'claude' ? 'claude' : 'codex')
+          const known = (tool === 'claude' || tool === 'vscode') ? tool : 'codex'
+          const t = toolConfig(loadConfig(), known)
           return { security: !!t.securityMode, smartRouting: !!t.smartMode, model: t.model }
         },
         // 网关接管鉴权：实时把已保存的 API Key 提供给网关注入请求头。
@@ -443,9 +444,32 @@ ipcMain.handle('check-install', async (_, tool) => {
   if (tool === 'node') {
     return { installed: await whichCli('node') }
   }
+  if (tool === 'vscode') {
+    // 装了 Continue 扩展即算「可一键配置」；否则看 VS Code 本体是否装（提示先装扩展）
+    return { installed: hasContinueExt(), editor: hasVSCode(), ext: hasContinueExt() }
+  }
   const bin = tool === 'codex-cli' ? 'codex' : 'claude'
   return { installed: await whichCli(bin) }
 })
+
+// VS Code 本体是否安装（app 路径 或 code CLI 落点）
+function hasVSCode() {
+  const home = os.homedir()
+  const candidates = process.platform === 'darwin'
+    ? ['/Applications/Visual Studio Code.app', path.join(home, 'Applications/Visual Studio Code.app')]
+    : process.platform === 'win32'
+      ? [path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Microsoft VS Code', 'Code.exe'),
+         'C:\\Program Files\\Microsoft VS Code\\Code.exe']
+      : ['/usr/bin/code', '/usr/local/bin/code', '/snap/bin/code']
+  return candidates.some(p => fs.existsSync(p))
+}
+// Continue 扩展是否安装（扩展解压在 ~/.vscode/extensions/continue.continue-*）
+function hasContinueExt() {
+  try {
+    const extDir = path.join(os.homedir(), '.vscode', 'extensions')
+    return fs.readdirSync(extDir).some(n => n.toLowerCase().startsWith('continue.continue'))
+  } catch { return false }
+}
 
 // ─── 打开已安装的工具 ───────────────────────────────────────────
 ipcMain.handle('open-tool', (_, tool) => {
@@ -614,6 +638,43 @@ ipcMain.handle('check-claude-configured', () => {
   } catch {
     return { configured: false }
   }
+})
+
+// VS Code（Continue 扩展）：写 ~/.continue/config.yaml 的 models 块。
+// Continue 用 OpenAI 兼容 provider，apiBase 指向本地网关，走 /v1/chat/completions
+// → 网关 handleChat 做智能路由/安全/流式。apiKey 内联真 Key（Continue 要求非空），
+//   网关仍会用 config.json 的最新 Key 注入鉴权，故换 Key 不必重写本文件也能生效。
+// 配置即时生效（Continue 监听文件变更，最多重载窗口），无需重启。
+ipcMain.handle('write-vscode-config', async (_, { key, model }) => {
+  if (!isValidKey(key)) return { success: false, error: 'API Key 格式不合法（应以 sk- 开头）' }
+  if (model != null && model !== '' && !isValidModelName(model)) return { success: false, error: '模型名不合法' }
+  const dir = path.join(os.homedir(), '.continue')
+  const file = path.join(dir, 'config.yaml')
+  const port = await ensureGateway()
+  const baseUrl = port ? `http://127.0.0.1:${port}/v1` : 'https://onlyrouter.ai/v1'
+  const m = model || 'gpt-5.5'
+  // 纯文本 YAML：model/key 已白名单校验，安全内插。roles 覆盖聊天/补全/编辑/应用。
+  const yaml = `name: OnlyRouter
+version: 1.0.0
+schema: v1
+models:
+  - name: OnlyRouter (${m})
+    provider: openai
+    model: ${m}
+    apiBase: ${baseUrl}
+    apiKey: ${key}
+    roles:
+      - chat
+      - edit
+      - apply
+`
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(file, yaml)
+  } catch (e) {
+    return { success: false, error: '写入 config.yaml 失败：' + (e && e.message) }
+  }
+  return { success: true, configPath: file }
 })
 
 ipcMain.handle('open-url', (_, url) => { shell.openExternal(url) })

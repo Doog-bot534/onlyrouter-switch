@@ -422,18 +422,20 @@ const PRIORITY = [
 let state = {
   key: '', keyValid: false, keyLocked: false,
   groups: [], modelsRaw: [],
-  codexConfigured: false, claudeConfigured: false,
+  codexConfigured: false, claudeConfigured: false, vscodeConfigured: false,
   // 安装状态：进入 App 时检测。Codex = App 或 CLI 任一装了即为已装；Claude = CLI 装了即为已装。
   // null = 尚未检测完成（按钮先不因「未装」而禁用，避免误判）
-  codexInstalled: null, claudeInstalled: null,
+  codexInstalled: null, claudeInstalled: null, vscodeInstalled: null,
   // 按工具独立配置：模型 + 两个增强开关 + 各自的展开态（两张卡的模型选择器独立渲染）
   codex:  { model: 'gpt-5.5',           smartMode: false, securityMode: false, expanded: new Set(), showAll: false },
   claude: { model: 'claude-opus-4-8-ab', smartMode: false, securityMode: false, expanded: new Set(), showAll: false },
+  vscode: { model: 'gpt-5.5',           smartMode: false, securityMode: false, expanded: new Set(), showAll: false },
 }
 // 工具元信息：渲染卡头与文案用
 const TOOLS = {
   codex:  { name: 'Codex',       desc: 'OpenAI 编程助手 · App 与命令行通用', icon: 'codex-icon.png',  cli: 'codex',  fusion: true,  claudeOnly: false, envBased: true },
   claude: { name: 'Claude Code', desc: 'Anthropic 官方编程工具（命令行）',    icon: 'claude-icon.png', cli: 'claude', fusion: true,  claudeOnly: false, envBased: false },
+  vscode: { name: 'VS Code',     desc: '搭配 Continue 扩展 · 编辑器内聊天/补全', icon: 'vscode-icon.png', cli: 'code',   fusion: false, claudeOnly: false, envBased: false, ext: 'Continue' },
 }
 // 工具顺序（后续加新产品只需往 TOOLS 加一项，全 UI 自动纳入）
 const TOOL_ORDER = Object.keys(TOOLS)
@@ -590,7 +592,7 @@ function buildToolCard(tool) {
     </div>
     <div class="tcard-sub">
       <button class="btn btn-lime btn-sm" id="btnConfig-${tool}" style="width:100%">一键配置</button>
-      <div class="action-note">配置后终端输入 <code>${t.cli}</code> 即可使用 · <a id="docs-${tool}">查看文档</a></div>
+      <div class="action-note">${tool === 'vscode' ? '配置后在 VS Code 点左侧 <b>Continue</b> 图标即可使用' : `配置后终端输入 <code>${t.cli}</code> 即可使用`} · <a id="docs-${tool}">查看文档</a></div>
     </div>`
   return card
 }
@@ -650,9 +652,13 @@ async function configTool(tool) {
   try {
     const r = tool === 'codex'
       ? await window.api.writeCodexConfig(state.codex.model, state.key)
-      : await window.api.writeClaudeConfig(state.key, state.claude.model)
+      : tool === 'vscode'
+        ? await window.api.writeVscodeConfig(state.key, state.vscode.model)
+        : await window.api.writeClaudeConfig(state.key, state.claude.model)
     if (r && r.success) {
-      if (tool === 'codex') state.codexConfigured = true; else state.claudeConfigured = true
+      if (tool === 'codex') state.codexConfigured = true
+      else if (tool === 'vscode') state.vscodeConfigured = true
+      else state.claudeConfigured = true
       updateUI()
       if (r.envOk === false) {
         showError('配置文件已写入，但 Key 没存进环境变量',
@@ -689,6 +695,18 @@ async function configTool(tool) {
         showDialog(`${t.name} 配置成功 🎉`,
           `已写好配置。<br><br>⚠️ <b>首次配置需重启一次</b>：${how}<br><br>以后再改模型或换 Key 就不用重启了。`,
           '✅', actions)
+      } else if (tool === 'vscode') {
+        // Continue：配置写进 ~/.continue/config.yaml，扩展会自动重载。提醒装/重载扩展。
+        const ext = await window.api.checkInstall('vscode')
+        const hasExt = !!(ext && ext.ext)
+        const body = hasExt
+          ? `已写好 Continue 配置（<code>~/.continue/config.yaml</code>）。<br><br>回到 VS Code，点左侧 <b>Continue 图标</b>就能用。如果没立刻生效，按 <b>Cmd/Ctrl+Shift+P</b> → 输入 <b>Reload Window</b> 重载一次即可。`
+          : `配置文件已写好（<code>~/.continue/config.yaml</code>），但还没检测到 <b>Continue 扩展</b>。<br><br>请在 VS Code 扩展市场搜索安装 <b>Continue</b>，装好后回到编辑器点左侧 Continue 图标即可使用，无需重新配置。`
+        showDialog(`${t.name} 配置成功 🎉`, body, '✅',
+          hasExt
+            ? [{ label: '知道了', primary: true }]
+            : [{ label: '去装 Continue 扩展', primary: true, onClick: () => window.api.openUrl('https://marketplace.visualstudio.com/items?itemName=Continue.continue') },
+               { label: '我自己来', primary: false }])
       } else {
         // 非首次（Codex 网关已接管 Key）或 Claude（读 settings.json）：均无需重开终端，下次运行直接生效
         showDialog(`${t.name} 配置成功 🎉`,
@@ -793,17 +811,22 @@ function renderModels(tool) {
 async function refreshInstallStatus() {
   if (!window.api || !window.api.checkInstall) return
   try {
-    const [app, cliC, cliCl] = await Promise.all([
+    const [app, cliC, cliCl, vsc] = await Promise.all([
       window.api.checkInstall('codex-app'),
       window.api.checkInstall('codex-cli'),
       window.api.checkInstall('claude-cli'),
+      window.api.checkInstall('vscode'),
     ])
     state.codexInstalled = !!((app && app.installed) || (cliC && cliC.installed))
     state.claudeInstalled = !!(cliCl && cliCl.installed)
+    // VS Code：装了编辑器即可配置（Continue 扩展没装也能写配置，之后引导装扩展）。
+    // 装了扩展也算（覆盖只装便携版/扩展先于本体被检出的情况）。
+    state.vscodeInstalled = !!(vsc && (vsc.editor || vsc.ext))
   } catch {
     // 检测失败不阻断使用：保持 null（不因未装而禁用按钮）
     state.codexInstalled = null
     state.claudeInstalled = null
+    state.vscodeInstalled = null
   }
   updateUI()
 }
@@ -812,6 +835,7 @@ async function refreshInstallStatus() {
 function updateUI() {
   setStatus('dot-codex', 'lbl-codex', state.codexConfigured, state.codexConfigured ? '已配置' : '未配置')
   setStatus('dot-claude', 'lbl-claude', state.claudeConfigured, state.claudeConfigured ? '已配置' : '未配置')
+  setStatus('dot-vscode', 'lbl-vscode', state.vscodeConfigured, state.vscodeConfigured ? '已配置' : '未配置')
 
   // 配置按钮禁用条件：① 未验证 Key；② 已确认未安装该工具（installed===false；null=检测中不禁用）
   for (const tool of TOOL_ORDER) {
@@ -848,6 +872,7 @@ async function loadModels() {
     const firstAny = (state.groups[0] && state.groups[0].channels[0] && state.groups[0].channels[0].name) || names[0]
     if (state.codex.model !== FUSION && !names.includes(state.codex.model)) state.codex.model = firstAny
     if (state.claude.model !== FUSION && !names.includes(state.claude.model)) state.claude.model = firstClaude
+    if (state.vscode.model !== FUSION && !names.includes(state.vscode.model)) state.vscode.model = firstAny
     if (res.source === 'live') { srcBadge.className = 'right live'; srcText.textContent = '实时价格' }
     else { srcBadge.className = 'right'; srcText.textContent = '本地缓存价格' }
   } else {
@@ -884,6 +909,7 @@ async function loadState() {
   }
   state.codex = pick(cfg.codex, 'gpt-5.5')
   state.claude = pick(cfg.claude, 'claude-opus-4-8-ab')
+  state.vscode = pick(cfg.vscode, 'gpt-5.5')
 }
 
 // 反映某工具某开关的视觉状态（开关勾选 + 卡片高亮 + 模型区锁定）
@@ -927,7 +953,7 @@ function initModes() {
 }
 function saveState() {
   // 持久化按工具分组（含 key）；旧扁平字段不再写，loadState 会做兼容迁移
-  window.api.saveConfig({ key: state.key, codex: persistConf(state.codex), claude: persistConf(state.claude) })
+  window.api.saveConfig({ key: state.key, codex: persistConf(state.codex), claude: persistConf(state.claude), vscode: persistConf(state.vscode) })
   updateUI()
 }
 // 持久化时剥掉运行态字段（expanded 是 Set，不可序列化）
