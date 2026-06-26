@@ -855,7 +855,7 @@ function updateUI() {
   keyInput.className = 'key-input' + (state.keyValid ? ' valid' : '') + (state.keyLocked ? ' locked' : '')
   if (!btn.classList.contains('checking')) btn.textContent = state.keyLocked ? '修改' : '验证并保存'
 
-  renderModels('codex'); renderModels('claude')
+  for (const t of TOOL_ORDER) renderModels(t)
 }
 
 // ─── 加载模型 ────────────────────────────────────────────────────
@@ -878,7 +878,7 @@ async function loadModels() {
   } else {
     srcText.textContent = '加载失败'
   }
-  renderModels('codex'); renderModels('claude')
+  for (const t of TOOL_ORDER) renderModels(t)
 }
 
 // ─── 检测配置状态 ────────────────────────────────────────────────
