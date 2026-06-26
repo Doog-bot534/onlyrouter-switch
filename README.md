@@ -125,6 +125,7 @@ npm run build        # mac + win 一起
 ## 七、待办 / 已知问题
 
 - [x] **Codex 上下文窗口误判**：Codex 对自定义 provider 不认识真实窗口，会套错误小默认值（官方 issue 里 gpt-5.5 被报成 2432 token），导致反复误触发压缩。已修：写 config.toml 时按所选模型从 OnlyRouter `/api/models` 注入真实 `model_context_window` + 85% 的 `model_auto_compact_token_limit`。
+- [x] **「大切小」超窗报错**：网关实时切模型时，从大窗模型切到小窗模型，已有长历史会超小模型输入上限 → 上游 `context_length_exceeded`。已修：网关上下文护栏——转发前按目标模型真实窗口（×0.8 安全线）估算，超限自动压缩历史（保留 system+最近轮次）；兜底再用上游报错里的真实 limit 精确压缩重试。三路径（Codex/Claude/VS Code）全覆盖，用户无感。
 - [ ] Codex App（GUI）从 Dock 启动不读 `.zshrc`，环境变量方案对 App 可能无效——需实测确认网关接管鉴权后 App 是否还依赖该变量。
 - [ ] Windows Codex App 安装包直链未补（`main.js` 的 `DOWNLOADS.codexAppWin`）。
 - [ ] 下载源默认指向 OpenAI 官方 CDN（国内需 VPN），上线前替换成国内托管直链。

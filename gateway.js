@@ -37,6 +37,7 @@ async function getModels() {
       input_price: numOf(m.input_price), output_price: numOf(m.output_price),
       cache_read_price: numOf(m.cache_read_price), cache_write_price: numOf(m.cache_write_price),
       max_output_tokens: m.max_output_tokens || null,
+      context_window: numOf(m.context_window),
     }))
     if (list.length) _models = { at: Date.now(), list }
   } catch {}
@@ -44,6 +45,58 @@ async function getModels() {
 }
 function numOf(v) { return v == null || v === '' || isNaN(v) ? null : Number(v) }
 const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+// ─── 上下文护栏（避免「大切小」超窗报错）────────────────────────────────────
+// 背景：用户在 Switch 里切模型（网关实时覆盖），从大窗模型切到小窗模型时，
+// 已有的长历史可能超过小模型的输入上限 → 上游报 context_length_exceeded。
+// Codex 自己的 auto-compact 依据 config.toml 的静态窗口，跟不上网关的动态切换，
+// 所以由网关在转发前/报错后兜底压缩历史，对用户无感、不报错。
+
+// 粗略 token 估算：中英文混合按字符数 / 3 偏高估（宁可多压一点也不要漏到超窗报错）。
+// 不引 tiktoken 依赖——护栏只需“够准到能防超限”，高估是安全方向。
+function estimateTokens(messages) {
+  let chars = 0
+  for (const m of (messages || [])) {
+    if (typeof m.content === 'string') chars += m.content.length
+    else if (Array.isArray(m.content)) {
+      for (const p of m.content) {
+        if (typeof p === 'string') chars += p.length
+        else if (p && typeof p.text === 'string') chars += p.text.length
+      }
+    }
+  }
+  return Math.ceil(chars / 3)
+}
+
+// 压缩历史到目标 token 内：保留所有 system 消息 + 最近的若干轮对话，
+// 丢弃中间最旧的非 system 消息，并插一条占位摘要说明已截断。
+function compactMessages(messages, targetTokens) {
+  if (!Array.isArray(messages) || estimateTokens(messages) <= targetTokens) return messages
+  const sys = messages.filter(m => m.role === 'system')
+  const rest = messages.filter(m => m.role !== 'system')
+  const notice = { role: 'system', content: '[上下文护栏] 为适配当前模型的上下文窗口，较早的对话历史已自动省略，仅保留系统提示与最近的对话。' }
+  // 从最新往前累加，直到接近目标；至少保留最后一条（当前用户输入）
+  const kept = []
+  let budget = targetTokens - estimateTokens(sys) - estimateTokens([notice])
+  for (let i = rest.length - 1; i >= 0; i--) {
+    const t = estimateTokens([rest[i]])
+    if (kept.length && budget - t < 0) break
+    kept.unshift(rest[i]); budget -= t
+  }
+  return [...sys, notice, ...kept]
+}
+
+// 取某模型可安全使用的输入 token 上限：真实窗口 × 0.8（给输出与估算误差留余量）。
+// 实测上游对 gpt-5.4-mini（标称 400k）实际输入限 272k，约 68%，故 0.8 仍偏保守稳妥。
+async function safeInputLimit(model) {
+  try {
+    const m = (await getModels()).find(x => x.name === model)
+    const w = m && Number(m.context_window)
+    if (w && w > 0) return Math.floor(w * 0.8)
+  } catch {}
+  return null  // 拿不到窗口则不主动压（交给上游报错兜底）
+}
+
 
 // ─── 上游协议识别 ──────────────────────────────────────────────────────────
 // 实测(2026-06-25)：OnlyRouter 上模型按名字后缀走不同协议，模型表里无字段标识，只能按名判。
@@ -241,6 +294,13 @@ const TRANSIENT = [408, 425, 429, 500, 502, 503, 504]
 async function forwardChat(upstream, auth, chatBody, wantStream, alternates) {
   const models = [chatBody.model, ...(alternates || []).filter(m => m && m !== chatBody.model)]
   const tries = []
+  // 预防式护栏：转发前按目标模型真实窗口估算，超安全线就先压缩历史（无感，避免上游报错往返）。
+  try {
+    const limit = await safeInputLimit(chatBody.model)
+    if (limit && estimateTokens(chatBody.messages) > limit) {
+      chatBody = Object.assign({}, chatBody, { messages: compactMessages(chatBody.messages, limit) })
+    }
+  } catch {}
   for (const model of models) {
     const native = isAnthropicNative(model)
     const path = native ? '/messages' : '/chat/completions'
@@ -253,6 +313,23 @@ async function forwardChat(upstream, auth, chatBody, wantStream, alternates) {
       try {
         const r = await fetch(upstream + path, { method: 'POST', headers, body: JSON.stringify(body) })
         if (r.ok) return { res: r, model, native, tries }
+        // 兜底式护栏：上游报「超上下文」→ 用错误里的真实 limit 精确压缩历史，重试一次（仅非流式可读 body）
+        if (r.status === 400) {
+          const errText = await r.clone().text().catch(() => '')
+          const real = parseContextLimit(errText)
+          if (real && !chatBody.__compacted) {
+            const compacted = compactMessages(chatBody.messages, Math.floor(real * 0.9))
+            if (compacted !== chatBody.messages) {
+              chatBody = Object.assign({}, chatBody, { messages: compacted, __compacted: true })
+              tries.push(`${model} ctx-exceeded→compact retry`)
+              attempt--  // 不计入瞬时重试次数，用压缩后的内容再试这个模型
+              const body2 = native ? chatToAnthropic(Object.assign({}, chatBody, { model })) : Object.assign({}, chatBody, { model })
+              const r2 = await fetch(upstream + path, { method: 'POST', headers, body: JSON.stringify(body2) })
+              if (r2.ok) return { res: r2, model, native, tries }
+              return { res: r2, model, native, tries }
+            }
+          }
+        }
         if (!TRANSIENT.includes(r.status)) return { res: r, model, native, tries }  // 非瞬时错误(如400/401)：直接返回，不重试
         tries.push(`${model} HTTP ${r.status}`)
         await sleep(300 * (attempt + 1))
@@ -263,6 +340,14 @@ async function forwardChat(upstream, auth, chatBody, wantStream, alternates) {
     }
   }
   return { res: null, tries }
+}
+
+// 从上游「超上下文」报错里解析真实 token 限额，例如：
+// "Input tokens exceed the configured limit of 272000 tokens."
+function parseContextLimit(errText) {
+  if (!errText || !/context_length_exceeded|exceed.*(limit|context)/i.test(errText)) return null
+  const m = errText.match(/limit of (\d+)/i) || errText.match(/(\d{4,})\s*tokens/i)
+  return m ? parseInt(m[1], 10) : null
 }
 
 // 对翻译后的 chat messages 做出站脱敏（字符串与文本 part 都覆盖）
@@ -1138,6 +1223,14 @@ async function handleChat(req, res, body, upstream, auth, options) {
     } catch {}
   }
 
+  // 上下文护栏（预防式）：模型已定，按其真实窗口估算，超安全线先压缩历史，避免「大切小」超窗报错。
+  try {
+    const limit = await safeInputLimit(parsed.model)
+    if (limit && Array.isArray(parsed.messages) && estimateTokens(parsed.messages) > limit) {
+      parsed.messages = compactMessages(parsed.messages, limit)
+    }
+  } catch {}
+
   // 安全网关·出站：把 messages 里的密钥/PII 脱敏（可逆占位符），响应回来再按 store 还原
   let store = null
   if (options.security && Array.isArray(parsed.messages)) {
@@ -1247,6 +1340,16 @@ async function handleMessages(req, res, body, upstream, auth, options) {
 
   const scan = options.security ? (s => security.scanInbound(s)) : null
   const hooks = scan ? { onText: s => scan(s).text, flush: () => '', restoreFull: s => scan(s).text } : null
+
+  // 上下文护栏（预防式）：按目标模型真实窗口估算 messages，超安全线先压缩。
+  // anthropic 的 system 是独立字段（parsed.system），不在 messages 里，压缩只动对话历史。
+  try {
+    const limit = await safeInputLimit(target)
+    if (limit && Array.isArray(parsed.messages) && estimateTokens(parsed.messages) > limit) {
+      parsed.messages = compactMessages(parsed.messages, limit)
+      body = Buffer.from(JSON.stringify(parsed))  // 透传分支用 body，需同步更新
+    }
+  } catch {}
 
   // ── Fusion：Claude Code 也支持（面板+评委逻辑复用，结果用 anthropic 格式合成回吐）──
   if (isFusion(target)) {
