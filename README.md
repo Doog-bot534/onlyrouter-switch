@@ -130,4 +130,22 @@ npm run build        # mac + win 一起
 - [ ] Windows Codex App 安装包直链未补（`main.js` 的 `DOWNLOADS.codexAppWin`）。
 - [ ] 下载源默认指向 OpenAI 官方 CDN（国内需 VPN），上线前替换成国内托管直链。
 
+### 待调研 / 规划（团队跟进）
+
+- [ ] **梳理 OnlyRouter 可接入接口清单**。目前网关只用到了少数几个端点，需系统整理 OnlyRouter 对外接口，明确各接口的协议、用途、鉴权方式与适用工具，作为后续扩展（更多工具/能力）的依据。
+  - 已实测在用的端点：
+    | 端点 | 用途 | 协议 | 备注 |
+    |------|------|------|------|
+    | `GET /api/models` | 全量模型表（含价格、`context_window`、`model_type`） | 自定义 JSON | 智能路由、价格展示、上下文护栏取窗口都依赖它 |
+    | `GET /v1/models` | OpenAI 兼容模型列表 | OpenAI | 仅返回 id，无窗口/价格，信息少于 `/api/models` |
+    | `POST /v1/chat/completions` | 文本对话主力 | OpenAI Chat | VS Code/Continue 直连；Codex/Claude 跨家族翻译后也走它 |
+    | `POST /v1/responses` | Codex 专用 | OpenAI Responses | 网关把它翻成 chat 再转发 |
+    | `POST /v1/messages` | Claude 专用 | Anthropic | `-ab` 模型原生透传，其余翻成 chat |
+    | `POST /v1/images/generations` | 文生图 | OpenAI | 模态路由用 |
+  - 待补充确认：视频生成接口、embeddings、rerank、文件/批量、用量与计费查询、模型能力元数据（是否支持 tools/vision/streaming）等是否对外开放及其规格。建议向 OnlyRouter 要一份完整 API 文档或 OpenAPI spec 归档到仓库。
+- [ ] **本地代理 vs 线上代理：方案取舍评估**。当前是「桌面 App 内置本地网关（`127.0.0.1`）」方案，需评估是否/何时改为「线上托管代理」，给出结论与触发条件。
+  - 本地代理（现状）：零额外服务器成本、用户数据不经第三方中转（隐私好）、离线/内网可用；但能力受限于用户机器、每台都要装 App、协议翻译/路由/护栏的迭代要靠用户更新客户端、无法集中观测与限流。
+  - 线上代理：统一升级（改一处全员生效）、集中观测/计费/风控、瘦客户端甚至免客户端；但要承担服务器与带宽成本、用户 prompt 经服务端中转（隐私与合规需交代）、单点故障与扩缩容、鉴权与多租户隔离要从头做。
+  - 决策维度：目标用户规模、隐私/合规要求、迭代频率、运维投入、成本模型。建议先明确「面向小白零运维」与「企业集中管控」哪个是主场景，再定主次（也可本地为主、线上为可选增强）。
+
 
