@@ -838,12 +838,14 @@ async function handleResponses(req, res, body, upstream, auth, options) {
   if (options.smartRouting) {
     try {
       const models = await getModels()
-      const d = router.decide(chatBody.messages, chatBody.model, models, { learner: options.learner })
+      // Codex 经网关走 /chat/completions（Responses 已翻成 chat），发不了 Anthropic 原生 -ab → 候选排除。
+      const chatModels = models.filter(m => !isAnthropicNative(m.name))
+      const d = router.decide(chatBody.messages, chatBody.model, chatModels, { learner: options.learner })
       if (d.model) chatBody.model = d.model
       routeDifficulty = d.difficulty
       if (options.onEvent) options.onEvent({ type: 'route', to: d.model, reason: d.reason })
-      // 备用：按价格取另外两个文本模型，主模型/渠道故障时自动切换
-      alternates = models.filter(m => (m.model_type || 'text') === 'text' && m.input_price != null && m.name !== chatBody.model)
+      // 备用：按价格取另外两个文本模型，主模型/渠道故障时自动切换（同样排除 -ab）
+      alternates = chatModels.filter(m => (m.model_type || 'text') === 'text' && m.input_price != null && m.name !== chatBody.model)
         .sort((a, b) => b.input_price - a.input_price)
       alternates = [alternates[0] && alternates[0].name, alternates[alternates.length - 1] && alternates[alternates.length - 1].name].filter(Boolean)
     } catch (e) { /* fail-open：路由出错不影响转发 */ }
@@ -1128,7 +1130,10 @@ async function handleChat(req, res, body, upstream, auth, options) {
   if (options.smartRouting) {
     try {
       const models = await getModels()
-      const d = router.decide(parsed.messages || [], parsed.model, models, { learner: options.learner })
+      // chat 路径（/chat/completions）发不了 Anthropic 原生 -ab 模型（它们只认 /messages）→ 候选池排除，
+      // 否则 router 可能选中 -ab 导致上游 400 "not configured for openai protocol"。
+      const chatModels = models.filter(m => !isAnthropicNative(m.name))
+      const d = router.decide(parsed.messages || [], parsed.model, chatModels, { learner: options.learner })
       if (d.model) parsed.model = d.model
     } catch {}
   }
