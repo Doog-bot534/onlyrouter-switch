@@ -300,6 +300,25 @@ async function fetchAllModels() {
   return all
 }
 
+// 取某模型的真实上下文窗口（token 数）。
+// 根因：Codex 对自定义 provider 的模型不认识真实窗口，会套一个错误的小默认值
+// （官方 issue 里 gpt-5.5 经第三方被报成 2432），导致反复误触发压缩/误判“超窗”。
+// 修法：写 config.toml 时按所选模型注入 model_context_window（顶层 key）。
+// 取值优先级：实时 /api/models → 本地 fallback.json → 保守默认 128k（够用且不冒进）。
+async function getContextWindow(model) {
+  const pick = (list) => {
+    const m = (list || []).find(x => (x.name || x.id) === model)
+    const w = m && Number(m.context_window)
+    return (w && w > 0) ? w : null
+  }
+  try { const w = pick(await fetchAllModels()); if (w) return w } catch {}
+  try {
+    const fb = JSON.parse(fs.readFileSync(path.join(__dirname, 'renderer', 'models-fallback.json'), 'utf8'))
+    const w = pick(fb); if (w) return w
+  } catch {}
+  return 128000
+}
+
 ipcMain.handle('fetch-models', async () => {
   try {
     const all = await fetchAllModels()
@@ -560,11 +579,17 @@ ipcMain.handle('write-codex-config', async (_, { model, key }) => {
   // 网关未起来时退回直连 onlyrouter（非 chat-only 模型仍可用），保证不至于完全不可用。
   const port = await ensureGateway()
   const baseUrl = port ? `http://127.0.0.1:${port}/v1` : 'https://onlyrouter.ai/v1'
+  // 上下文窗口：按所选模型注入真实值，修正 Codex 对自定义 provider 套错默认窗口的问题。
+  // auto_compact 设为窗口的 85%（官方上限 90%），让压缩在接近真实容量时才触发，而非过早/过晚。
+  const ctxWindow = await getContextWindow(model)
+  const autoCompact = Math.floor(ctxWindow * 0.85)
   // 沙箱策略改保守默认（不再写死 never + danger-full-access）：
   //   approval_policy=on-request → 需要时才向用户请求授权；sandbox_mode=workspace-write → 仅当前工作区可写。
   //   这样 Codex 不会在用户机器上无审批执行高权限文件/命令操作。model 已经过白名单校验，可安全内插。
   const config = `model = "${model}"
 model_provider = "onlyrouter"
+model_context_window = ${ctxWindow}
+model_auto_compact_token_limit = ${autoCompact}
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 

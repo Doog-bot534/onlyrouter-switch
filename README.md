@@ -112,7 +112,7 @@ npm run build        # mac + win 一起
 
 | 工具 | 配置位置 | 是否需重启 |
 |------|---------|-----------|
-| Codex | `~/.codex/config.toml`（模型/渠道）+ 环境变量 `ONLYROUTER_API_KEY`（Key） | 仅**首次**创建环境变量需重开终端一次；之后网关接管鉴权，换 Key/模型免重启 |
+| Codex | `~/.codex/config.toml`（模型/渠道 + `model_context_window` 真实窗口）+ 环境变量 `ONLYROUTER_API_KEY`（Key） | 仅**首次**创建环境变量需重开终端一次；之后网关接管鉴权，换 Key/模型免重启 |
 | Claude Code | `~/.claude/settings.json`（全部，含 Key/BaseURL/Model） | 永不需要，`claude` 每次启动都读该文件 |
 | VS Code | `~/.continue/config.yaml`（Continue 扩展，OpenAI 兼容 provider，apiBase 指向本地网关） | 永不需要，Continue 监听文件变更；偶尔需 Reload Window |
 
@@ -124,6 +124,7 @@ npm run build        # mac + win 一起
 
 ## 七、待办 / 已知问题
 
+- [x] **Codex 上下文窗口误判**：Codex 对自定义 provider 不认识真实窗口，会套错误小默认值（官方 issue 里 gpt-5.5 被报成 2432 token），导致反复误触发压缩。已修：写 config.toml 时按所选模型从 OnlyRouter `/api/models` 注入真实 `model_context_window` + 85% 的 `model_auto_compact_token_limit`。
 - [ ] Codex App（GUI）从 Dock 启动不读 `.zshrc`，环境变量方案对 App 可能无效——需实测确认网关接管鉴权后 App 是否还依赖该变量。
 - [ ] Windows Codex App 安装包直链未补（`main.js` 的 `DOWNLOADS.codexAppWin`）。
 - [ ] 下载源默认指向 OpenAI 官方 CDN（国内需 VPN），上线前替换成国内托管直链。
