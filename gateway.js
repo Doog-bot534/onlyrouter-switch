@@ -818,6 +818,11 @@ async function handleResponses(req, res, body, upstream, auth, options) {
   const chatBody = responsesToChat(parsed)
   const userText = lastUserText(chatBody.messages)
 
+  // ── Switch 全局说了算：用 UI 当前选的模型覆盖客户端配置里的 model。
+  // 这样在 Switch 里切模型即时生效（下次请求就变），无需重写 config.toml/重启。
+  // 智能路由开启时跳过（由 router 决策）；Fusion 也通过这里传入，下面 isFusion 分支接管。
+  if (!options.smartRouting && options.model) chatBody.model = options.model
+
   // ── 模态路由（属智能路由模式）：识别"生成图/视频"→ 改道图像/视频模型 ──
   if (options.smartRouting) {
     const modality = detectModality(userText)
@@ -1114,6 +1119,10 @@ async function handleChat(req, res, body, upstream, auth, options) {
     return res.end(JSON.stringify({ error: { message: 'invalid JSON body' } }))
   }
   const wantStream = !!parsed.stream
+
+  // Switch 全局说了算：用 UI 当前选的模型覆盖客户端请求里的 model（智能路由开启时由 router 决策，跳过）。
+  // chat 路径不支持 Fusion（那是 Responses 专属），万一传进来则忽略，保留客户端原值。
+  if (!options.smartRouting && options.model && !isFusion(options.model)) parsed.model = options.model
 
   // 智能路由：对 chat messages 自主选模型（忽略客户端所选）
   if (options.smartRouting) {

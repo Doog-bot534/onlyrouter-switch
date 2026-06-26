@@ -752,7 +752,7 @@ function renderModels(tool) {
       <span class="mg-badge bg-hot">最强</span>
       <span class="mg-meta">${fsel ? '<span class="mg-sel">已选</span>' : `<span class="mg-low">${fprice}</span>`}<span class="mg-arrow" style="visibility:hidden">&#9662;</span></span>
     </div>`
-    fg.addEventListener('click', () => { conf.model = FUSION; saveState(); renderModels(tool) })
+    fg.addEventListener('click', () => { conf.model = FUSION; saveState(); renderModels(tool); if (state[tool + 'Configured']) toast('已切到 Fusion 融合款，下次对话即生效') })
     list.appendChild(fg)
   }
 
@@ -798,6 +798,9 @@ function renderModels(tool) {
         conf.expanded.add(g.base)
         saveState()
         renderModels(tool)
+        // 模型实时生效：网关用 Switch 选的模型覆盖请求，已配置过的工具下次请求即用新模型，无需再点配置。
+        // 未配置过的工具先不提示（还没接上代理）。
+        if (state[tool + 'Configured']) toast(`已切到 ${CH_META[c.ch] ? CH_META[c.ch].label : c.name}，下次对话即生效`)
       })
       body.appendChild(row)
     })
