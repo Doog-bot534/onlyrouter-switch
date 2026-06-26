@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   getConfig: () => ipcRenderer.invoke('get-config'),
   saveConfig: (data) => ipcRenderer.invoke('save-config', data),
   getPlatform: () => ipcRenderer.invoke('get-platform'),
+  getVersion: () => ipcRenderer.invoke('get-version'),
 
   fetchModels: () => ipcRenderer.invoke('fetch-models'),
   fetchModelsAll: () => ipcRenderer.invoke('fetch-models-all'),

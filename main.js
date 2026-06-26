@@ -257,6 +257,7 @@ function loginShellSpawn(cmd) {
 ipcMain.handle('get-config', () => loadConfig())
 ipcMain.handle('save-config', (_, data) => { saveConfig({ ...loadConfig(), ...data }); return true })
 ipcMain.handle('get-platform', () => process.platform)
+ipcMain.handle('get-version', () => app.getVersion())
 
 // 代理状态：供主界面显示「运行中 :端口」+ 一键自愈（重新探活/重写配置端口）
 ipcMain.handle('proxy-status', async () => {

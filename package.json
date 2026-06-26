@@ -1,7 +1,7 @@
 {
   "name": "onlyrouter-switch",
   "productName": "OnlyRouter Switch",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "OnlyRouter 一键配置 AI 工具，切换模型，本地代理（翻译/智能路由/安全网关）与多模态生成",
   "main": "main.js",
   "scripts": {

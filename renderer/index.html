@@ -208,7 +208,7 @@ body{background-image:radial-gradient(600px 300px at 50% -60px, rgba(184,255,0,.
 .tcard-sub > .label{margin-bottom:9px}
 .tcard-sub .model-wrap{position:relative}
 /* 模型列表区：限高 + 内部滚动，避免全展开把卡撑得极长 */
-.tcard-sub .model-wrap #modelList-codex,.tcard-sub .model-wrap #modelList-claude{max-height:300px;overflow-y:auto;padding-right:2px}
+.tcard-sub .model-wrap [id^="modelList-"]{max-height:300px;overflow-y:auto;padding-right:2px}
 .model-wrap [id^="modelList-"]::-webkit-scrollbar{width:5px}
 .model-wrap [id^="modelList-"]::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:5px}
 @media (max-width:520px){ .tool-track{margin:0 -14px;padding-left:14px;padding-right:14px} }
@@ -299,7 +299,7 @@ body{background-image:radial-gradient(600px 300px at 50% -60px, rgba(184,255,0,.
 <body>
 <div class="titlebar">
   <span class="logo">OnlyRouter</span>
-  <span class="pill">SWITCH v1.3.1</span>
+  <span class="pill" id="verPill">SWITCH</span>
 </div>
 <div class="app-body">
 <!-- 左侧竖排导航栏：视图切换（由 VIEWS 数据驱动，加视图只需加一项）-->
@@ -1168,6 +1168,11 @@ function initGen() {
 document.addEventListener('DOMContentLoaded', async () => {
   updateUI()
   if (!window.api) return
+
+  // 标题栏版本号：读真实 app 版本，避免硬编码与实际不符
+  if (window.api.getVersion) window.api.getVersion().then(v => {
+    const pill = document.getElementById('verPill'); if (pill && v) pill.textContent = 'SWITCH v' + v
+  }).catch(() => {})
 
   // 首次关窗最小化到托盘的一次性提示（小白不知道关窗≠退出，代理仍在后台跑）
   if (window.api.onTrayHint) window.api.onTrayHint(() => {
