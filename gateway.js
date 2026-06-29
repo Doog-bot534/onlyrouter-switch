@@ -24,6 +24,28 @@ const DEFAULT_UPSTREAM = 'https://onlyrouter.ai/v1'
 // 智能路由器在网关生命周期内常驻（会话粘性/迟滞需要跨请求状态）
 const router = new Router()
 
+// ── 活跃模型回显：把「实际转发上游的模型」广播给 Switch UI（客户端→Switch 同步）──
+// 去重：按 tool 记上次广播值，仅变化才发，避免 Claude 一回合多请求刷屏。
+// 过滤 haiku：Claude Code 一回合除主模型外还发后台小模型（标题/background），
+//   不过滤会让 UI 高亮在主模型与 haiku 间来回跳。
+const _lastBroadcast = {}
+function emitActiveModel(onEvent, tool, forwardedModel, incomingModel, viaSmartRouting, clientInitiated) {
+  if (typeof onEvent !== 'function' || !forwardedModel) return
+  if (/haiku/i.test(forwardedModel)) return
+  if (_lastBroadcast[tool] === forwardedModel) return
+  _lastBroadcast[tool] = forwardedModel
+  try { onEvent({ type: 'active-model', tool, forwardedModel, incomingModel: incomingModel || null, viaSmartRouting: !!viaSmartRouting, clientInitiated: !!clientInitiated }) } catch {}
+}
+
+// Claude 双向同步状态（边沿检测）：单靠「requested ≠ options.model」无法区分
+//   「用户在 Claude 端 /model 改过」与「运行中会话发的仍是启动默认值、只是和 Switch 新选的不同」。
+// 故记录两侧上一轮的值，判断「哪一侧发生了变化」让那一侧赢：
+//   · 客户端值变了（且是真实模型）→ 跟随客户端，并回推让 Switch 勾选同步；
+//   · 否则 Switch 值变了 → 用 Switch 覆盖（保留「Switch 切模型实时生效」能力）；
+//   · 都没变 → 沿用上次决定。
+// 注：假设单一 Claude 会话；多终端并发会互相干扰（小白场景少见，暂不处理）。
+const _claudeSync = { prevReq: null, prevSwitch: null, lastTarget: null }
+
 // 模型表缓存（智能/模态路由用），公开接口无需鉴权
 let _models = { at: 0, list: [] }
 async function getModels() {
@@ -45,6 +67,13 @@ async function getModels() {
 }
 function numOf(v) { return v == null || v === '' || isNaN(v) ? null : Number(v) }
 const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+// 某模型名是否是 OnlyRouter 模型表里的真实模型（用于 Claude「跟随客户端」判定）。
+// 真实模型才跟随；别名（opus/sonnet 等不在表里）不跟随，避免上游不认别名而断流。
+async function isKnownModel(name) {
+  if (!name) return false
+  try { return (await getModels()).some(m => m.name === name) } catch { return false }
+}
 
 // ─── 上下文护栏（避免「大切小」超窗报错）────────────────────────────────────
 // 背景：用户在 Switch 里切模型（网关实时覆盖），从大窗模型切到小窗模型时，
@@ -902,6 +931,7 @@ async function handleResponses(req, res, body, upstream, auth, options) {
   const wantStream = !!parsed.stream
   const chatBody = responsesToChat(parsed)
   const userText = lastUserText(chatBody.messages)
+  const incomingModel = chatBody.model  // 客户端请求原值（覆盖前），供活跃回显区分
 
   // ── Switch 全局说了算：用 UI 当前选的模型覆盖客户端配置里的 model。
   // 这样在 Switch 里切模型即时生效（下次请求就变），无需重写 config.toml/重启。
@@ -977,6 +1007,8 @@ async function handleResponses(req, res, body, upstream, auth, options) {
     return
   }
   if (fwd.model) { chatBody.model = fwd.model; parsed.model = fwd.model }  // 实际命中的模型（可能已故障转移到备用），回传给响应翻译
+  // 活跃回显：广播实际转发上游的模型（覆盖/智能路由/故障转移都结算完）
+  emitActiveModel(options.onEvent, 'codex', chatBody.model, incomingModel, !!options.smartRouting)
 
   if (!upstreamRes.ok) {
     const errText = await upstreamRes.text()
@@ -1206,6 +1238,7 @@ async function handleChat(req, res, body, upstream, auth, options) {
     return res.end(JSON.stringify({ error: { message: 'invalid JSON body' } }))
   }
   const wantStream = !!parsed.stream
+  const incomingModel = parsed.model  // 客户端请求原值（覆盖前），供活跃回显区分
 
   // Switch 全局说了算：用 UI 当前选的模型覆盖客户端请求里的 model（智能路由开启时由 router 决策，跳过）。
   // chat 路径不支持 Fusion（那是 Responses 专属），万一传进来则忽略，保留客户端原值。
@@ -1230,6 +1263,8 @@ async function handleChat(req, res, body, upstream, auth, options) {
       parsed.messages = compactMessages(parsed.messages, limit)
     }
   } catch {}
+  // 活跃回显：模型已定，广播实际转发上游的模型
+  emitActiveModel(options.onEvent, 'vscode', parsed.model, incomingModel, !!options.smartRouting)
 
   // 安全网关·出站：把 messages 里的密钥/PII 脱敏（可逆占位符），响应回来再按 store 还原
   let store = null
@@ -1323,6 +1358,7 @@ async function handleMessages(req, res, body, upstream, auth, options) {
 
   // 目标模型：智能路由则全模型候选自主选；否则用工具配置/请求里的模型。
   let target = requested
+  let clientInitiated = false  // 客户端 /model 主动改过 → 回推 Switch 勾选同步
   let routeDifficulty = null
   if (options.smartRouting) {
     try {
@@ -1335,7 +1371,32 @@ async function handleMessages(req, res, body, upstream, auth, options) {
       if (options.onEvent) options.onEvent({ type: 'route', tool: 'claude', to: target, reason: d.reason })
     } catch (e) { /* fail-open：路由出错则用 requested */ }
   } else if (options.model) {
-    target = options.model
+    // 双向同步（边沿检测）：谁变了谁赢。haiku 是 Claude Code 后台小模型，不参与同步判定。
+    const isHaiku = /haiku/i.test(requested || '')
+    const reqChanged = !isHaiku && requested && requested !== _claudeSync.prevReq
+    const switchChanged = options.model !== _claudeSync.prevSwitch
+    if (reqChanged && await isKnownModel(requested)) {
+      target = requested            // 客户端 /model 改过 → 跟随客户端，回推 Switch 勾选同步
+      clientInitiated = true
+    } else if (switchChanged) {
+      target = options.model         // Switch 改过 → 覆盖（保留实时生效）
+    } else if (_claudeSync.lastTarget && !isHaiku) {
+      target = _claudeSync.lastTarget  // 都没变 → 沿用上次决定，避免回弹
+    } else {
+      target = options.model
+    }
+    if (!isHaiku) {
+      _claudeSync.prevReq = requested
+      _claudeSync.prevSwitch = options.model
+      _claudeSync.lastTarget = target
+    }
+  }
+
+  // 活跃回显：目标模型已定，广播实际转发上游的模型（requested = 客户端请求原值）。
+  // clientInitiated=true 时让 renderer 把 Switch 勾选也同步到该模型（客户端→Switch 方向）。
+  // 跳过 haiku 后台请求（标题/background）：它不代表用户意图，广播会让 UI 高亮抖动。
+  if (!/haiku/i.test(requested || '')) {
+    emitActiveModel(options.onEvent, 'claude', target, requested, !!options.smartRouting, clientInitiated)
   }
 
   const scan = options.security ? (s => security.scanInbound(s)) : null
@@ -1468,6 +1529,9 @@ function startGateway(opts = {}) {
 
   // 两个模式开关由 main 进程的 config 实时提供（智能路由 / 安全网关，互不排斥）
   const getOptions = typeof opts.getOptions === 'function' ? opts.getOptions : () => ({})
+  // 网关事件回调（route/active-model/inbound）：main 进程注入，转发给 renderer 做活跃回显/安全提示。
+  // getOptions 只返回 {security,smartRouting,model}，故 onEvent 在此统一注入各 handler 的 options。
+  const onEvent = typeof opts.onEvent === 'function' ? opts.onEvent : null
   // 网关接管鉴权：main 进程持有的 API Key 实时提供给网关，转发时注入 Authorization。
   // 这样客户端（Codex）的环境变量值不再重要——换 Key 只需更新 config，无需重开终端。
   const getKey = typeof opts.getKey === 'function' ? opts.getKey : () => ''
@@ -1491,19 +1555,35 @@ function startGateway(opts = {}) {
     if (req.method === 'POST' && /\/responses$/.test(url.split('?')[0])) {
       let options = {}
       try { options = getOptions('codex') || {} } catch {}
+      if (onEvent) options.onEvent = onEvent
       return handleResponses(req, res, body, upstream, auth, options)
     }
     // Claude Code：/v1/messages → 按目标模型分流（Claude -ab 透传 / 跨家族翻译），不经 Responses 翻译
     if (req.method === 'POST' && /\/messages$/.test(url.split('?')[0])) {
       let options = {}
       try { options = getOptions('claude') || {} } catch {}
+      if (onEvent) options.onEvent = onEvent
       return handleMessages(req, res, body, upstream, auth, options)
     }
     // VS Code（Continue 等）：/v1/chat/completions → 智能路由 + 安全脱敏 + 流式真透传
     if (req.method === 'POST' && /\/chat\/completions$/.test(url.split('?')[0])) {
       let options = {}
       try { options = getOptions('vscode') || {} } catch {}
+      if (onEvent) options.onEvent = onEvent
       return handleChat(req, res, body, upstream, auth, options)
+    }
+    // Claude Code 模型发现：GET /v1/models 且 UA 像 Claude Code → 返回 discovery 格式 {data:[{id,display_name}]}。
+    // Claude Code 只收 id 以 claude/anthropic 开头的条目，故只回 OnlyRouter 表里这类模型；
+    // 其余模型靠 main.js 写 ANTHROPIC_CUSTOM_MODEL_OPTION 让用户在 Claude 端也能选到。
+    if (req.method === 'GET' && /\/models$/.test(url.split('?')[0]) && /claude/i.test(req.headers['user-agent'] || '')) {
+      try {
+        const models = await getModels()
+        const data = models
+          .filter(m => /^(claude|anthropic)/i.test(m.name))
+          .map(m => ({ id: m.name, display_name: m.name.replace(/-(ab|openrouter)$/i, '') }))
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        return res.end(JSON.stringify({ data }))
+      } catch { /* 取数失败则落到下面原样透传 */ }
     }
     // /v1/models 等：原样透传
     const m = url.match(/\/v1(\/.*)$/)

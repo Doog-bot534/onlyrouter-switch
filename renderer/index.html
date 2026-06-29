@@ -13,7 +13,7 @@
   --text:#fafafa; --dim:#71717a; --dim-2:#a1a1aa;
   --lime:#b8ff00; --lime-soft:rgba(184,255,0,.10); --lime-glow:rgba(184,255,0,.18);
   --blue:#818cf8; --green:#4ade80; --purple:#c084fc; --red:#f87171;
-  --font:'Inter','PingFang SC','Microsoft YaHei',sans-serif;
+  --font:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI Variable Text','Segoe UI','PingFang SC','Microsoft YaHei UI','Microsoft YaHei',sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{font-family:var(--font);color:var(--text);background:var(--bg);font-size:13px;
@@ -29,6 +29,13 @@ body{background-image:radial-gradient(600px 300px at 50% -60px, rgba(184,255,0,.
 .content-scroll{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding-bottom:20px}
 .content-scroll::-webkit-scrollbar{width:6px}
 .content-scroll::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:6px}
+/* Windows：滚动条略加宽 + 可见轨道 + hover 反馈，贴近系统习惯（mac 保持纤细悬浮条）。 */
+body.is-win .scroll-area::-webkit-scrollbar,
+body.is-win .content-scroll::-webkit-scrollbar{width:12px}
+body.is-win .scroll-area::-webkit-scrollbar-thumb,
+body.is-win .content-scroll::-webkit-scrollbar-thumb{background:var(--line-2);border:3px solid transparent;background-clip:padding-box;border-radius:8px}
+body.is-win .scroll-area::-webkit-scrollbar-thumb:hover,
+body.is-win .content-scroll::-webkit-scrollbar-thumb:hover{background:var(--dim);background-clip:padding-box}
 .nav-rail{flex:none;width:96px;display:flex;flex-direction:column;gap:6px;padding:16px 10px;
   background:rgba(9,9,11,.6);border-right:1px solid var(--line);backdrop-filter:blur(20px)}
 .nav-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 6px;border-radius:13px;
@@ -44,6 +51,10 @@ body{background-image:radial-gradient(600px 300px at 50% -60px, rgba(184,255,0,.
 .titlebar{-webkit-app-region:drag;height:46px;display:flex;align-items:center;justify-content:center;
   gap:8px;flex-shrink:0;user-select:none;background:rgba(9,9,11,.85);backdrop-filter:blur(20px);
   border-bottom:1px solid var(--line)}
+/* 让标题栏内容避开系统窗口按钮：mac 红绿灯在左、Windows 控制按钮在右。
+   用 Window Controls Overlay 环境变量自适应留白，避免内容被原生按钮压住。 */
+.titlebar{padding-left:env(titlebar-area-x,12px);
+  width:env(titlebar-area-width,100%);box-sizing:border-box}
 .titlebar *{-webkit-app-region:drag}
 .titlebar .logo{font-weight:700;font-size:13px;letter-spacing:-.2px;color:var(--lime)}
 .titlebar .pill{font-size:10px;font-weight:600;letter-spacing:1px;color:var(--dim);
@@ -258,10 +269,17 @@ body{background-image:radial-gradient(600px 300px at 50% -60px, rgba(184,255,0,.
 .mode-state.on{color:var(--lime)} .mode-state.off{color:var(--dim)}
 /* 智能模式开启时锁定手动选模型 */
 .model-wrap{position:relative}
+/* 活跃模型回显：网关回报的「客户端实际在跑的模型」，与用户所选区分（lime 点 + 文案） */
+.active-model{display:flex;align-items:center;gap:6px;margin:-2px 0 9px;font-size:12px;color:var(--dim-2);
+  background:var(--inset);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.active-model::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--lime);
+  box-shadow:0 0 0 3px var(--lime-soft);flex-shrink:0}
+.active-model b{color:var(--lime);font-weight:700}
 .smart-lock{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
   background:rgba(9,9,11,.86);backdrop-filter:blur(3px);border-radius:12px;padding:16px;text-align:center}
-#modelSection.locked .smart-lock{display:flex}
-#modelSection.locked #modelList{filter:grayscale(.8);opacity:.35;pointer-events:none}
+/* 模型区 id 是带工具后缀的（modelSection-codex 等），用属性前缀选择器匹配，否则锁定样式不生效 */
+[id^="modelSection-"].locked .smart-lock{display:flex}
+[id^="modelSection-"].locked [id^="modelList-"]{filter:grayscale(.8);opacity:.35;pointer-events:none}
 .smart-lock-in{font-size:12px;color:var(--dim-2);line-height:1.65;max-width:320px}
 .smart-lock-in b{color:var(--lime);font-weight:700}
 .fusion-row{border:1px solid var(--lime-glow)!important;background:linear-gradient(90deg,var(--lime-soft),transparent)}
@@ -427,9 +445,10 @@ let state = {
   // null = 尚未检测完成（按钮先不因「未装」而禁用，避免误判）
   codexInstalled: null, claudeInstalled: null, vscodeInstalled: null,
   // 按工具独立配置：模型 + 两个增强开关 + 各自的展开态（两张卡的模型选择器独立渲染）
-  codex:  { model: 'gpt-5.5',           smartMode: false, securityMode: false, expanded: new Set(), showAll: false },
-  claude: { model: 'claude-opus-4-8-ab', smartMode: false, securityMode: false, expanded: new Set(), showAll: false },
-  vscode: { model: 'gpt-5.5',           smartMode: false, securityMode: false, expanded: new Set(), showAll: false },
+  // activeModel = 网关回报的「实际命中模型」观测值，仅用于活跃高亮，不持久化、不写配置（防同步循环）。
+  codex:  { model: 'gpt-5.5',           smartMode: false, securityMode: false, expanded: new Set(), showAll: false, activeModel: null },
+  claude: { model: 'claude-opus-4-8-ab', smartMode: false, securityMode: false, expanded: new Set(), showAll: false, activeModel: null },
+  vscode: { model: 'gpt-5.5',           smartMode: false, securityMode: false, expanded: new Set(), showAll: false, activeModel: null },
 }
 // 工具元信息：渲染卡头与文案用
 const TOOLS = {
@@ -444,6 +463,21 @@ function prettyModel(m) {
   if (!m) return '未选'
   if (m === 'onlyrouter-fusion') return 'Fusion 融合款'
   return m.replace(/-(ab|openrouter)$/i, '')
+}
+
+// 活跃模型回显：显示网关回报的「客户端实际在跑的模型」。
+// Codex/VS Code 客户端选不出真实模型（由 Switch 覆盖），仅智能路由开启时显示实际命中才有信息量；
+// 非路由时实际命中恒等于所选，重复显示无意义 → 隐藏。Claude 可跟随客户端，故只要有观测值就显示。
+function renderActiveModel(tool) {
+  const el = document.getElementById('activeModel-' + tool)
+  if (!el) return
+  const a = state[tool] && state[tool].activeModel
+  const m = a && a.forwardedModel
+  const show = m && (tool === 'claude' || a.viaSmartRouting)
+  if (!show) { el.style.display = 'none'; return }
+  const via = a.viaSmartRouting ? '（智能路由）' : ''
+  el.innerHTML = '当前实际在跑：<b>' + escapeHtml(prettyModel(m)) + '</b>' + via
+  el.style.display = ''
 }
 
 // ─── 工具 ───────────────────────────────────────────────────────
@@ -559,7 +593,11 @@ function buildToolCard(tool) {
     </div>
     <div class="tcard-sub" id="modelSection-${tool}">
       <div class="label">选择模型</div>
-      ${t.claudeOnly ? '' : (tool === 'claude' ? '<div class="action-note" style="margin:-4px 0 8px">可用任意模型；选非 Claude 系列时网关会自动做协议转换。</div>' : '')}
+      <div class="active-model" id="activeModel-${tool}" style="display:none"></div>
+      ${t.claudeOnly ? '' : (
+        tool === 'claude' ? '<div class="action-note" style="margin:-4px 0 8px">可用任意模型；选非 Claude 系列时网关会自动做协议转换。</div>'
+        : tool === 'codex' ? '<div class="action-note" style="margin:-4px 0 8px">在这里选模型。<b>Codex 自带的模型下拉（GPT-5.x）只是显示用，实际跑哪个由这里说了算。</b></div>'
+        : '')}
       <div class="model-wrap">
         <div id="modelList-${tool}"><div class="loading">正在加载模型列表…</div></div>
         <div class="smart-lock">
@@ -820,7 +858,12 @@ async function refreshInstallStatus() {
       window.api.checkInstall('claude-cli'),
       window.api.checkInstall('vscode'),
     ])
-    state.codexInstalled = !!((app && app.installed) || (cliC && cliC.installed))
+    // Codex：App 或 CLI 任一确认装了 → 已装(true)；都确认没装 → 未装(false)；
+    // 只要有一边「拿不准(null)」且没人确认装了 → 保持 null（不确定就不禁用配置按钮，避免误锁）。
+    const appOk = app && app.installed, cliOk = cliC && cliC.installed
+    if (appOk === true || cliOk === true) state.codexInstalled = true
+    else if (appOk === false && cliOk === false) state.codexInstalled = false
+    else state.codexInstalled = null
     state.claudeInstalled = !!(cliCl && cliCl.installed)
     // VS Code：装了编辑器即可配置（Continue 扩展没装也能写配置，之后引导装扩展）。
     // 装了扩展也算（覆盖只装便携版/扩展先于本体被检出的情况）。
@@ -1166,6 +1209,11 @@ function initGen() {
 
 // ─── 入口 ───────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // 平台 class：供平台特定样式钩子（Windows 滚动条/控件等）。api.platform 是同步值，尽早打上。
+  try {
+    const plat = (window.api && window.api.platform) || ''
+    document.body.classList.add(plat === 'win32' ? 'is-win' : plat === 'darwin' ? 'is-mac' : 'is-linux')
+  } catch {}
   updateUI()
   if (!window.api) return
 
@@ -1194,6 +1242,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 用户可能切出去装 Codex/Claude 再切回来——窗口重获焦点时重新检测，装好后按钮自动解禁
   window.addEventListener('focus', () => { refreshInstallStatus() })
 
+  // 活跃模型回显：监听网关广播 + 挂载时拉一次最新值（补监听注册前丢失的 push）
+  if (window.api.onGatewayEvent) {
+    window.api.onGatewayEvent(evt => {
+      if (!evt || evt.type !== 'active-model' || !evt.tool) return
+      const t = state[evt.tool]; if (!t) return
+      t.activeModel = { forwardedModel: evt.forwardedModel, incomingModel: evt.incomingModel, viaSmartRouting: !!evt.viaSmartRouting }
+      renderActiveModel(evt.tool)
+      // 客户端主动改过模型（仅 Claude）→ 把 Switch 勾选也同步过去并持久化，两端一致。
+      // 仅当该模型在列表里时才改勾选，避免选中一个 UI 没有的项；非智能路由才同步（智能路由由系统选）。
+      if (evt.clientInitiated && evt.tool === 'claude' && !t.smartMode && evt.forwardedModel) {
+        const known = (state.modelsRaw || []).some(m => m.name === evt.forwardedModel)
+        if (known && t.model !== evt.forwardedModel) {
+          t.model = evt.forwardedModel
+          saveState()
+          renderModels('claude')
+        }
+      }
+    })
+  }
+  if (window.api.getActiveModels) {
+    try {
+      const all = await window.api.getActiveModels()
+      for (const tool of TOOL_ORDER) {
+        if (all && all[tool] && state[tool]) { state[tool].activeModel = all[tool]; renderActiveModel(tool) }
+      }
+    } catch {}
+  }
+
   // 已保存的 Key：后台静默校验
   if (state.key) {
     const ks = document.getElementById('keyStatus')
@@ -1220,6 +1296,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       state.key = val; state.keyValid = true; state.keyLocked = true; saveState()
       ks.className = 'key-status ok'; ks.textContent = '验证通过，已保存'
       toast('API Key 验证通过')
+      updateUI()   // 关键：刷新配置按钮禁用态，否则验证通过后按钮仍 disabled（点不动）
     } else {
       state.keyValid = false; state.keyLocked = false; updateUI()
       ks.className = 'key-status err'; ks.textContent = r.reason || '验证失败'

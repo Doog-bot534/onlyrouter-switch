@@ -21,7 +21,9 @@
     "files": [
       "*.js",
       "renderer/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "!**/._*",
+      "!**/.DS_Store"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

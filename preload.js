@@ -29,6 +29,16 @@ contextBridge.exposeInMainWorld('api', {
   // 首次关窗最小化到托盘的一次性提示
   onTrayHint: (cb) => { ipcRenderer.removeAllListeners('tray-hint'); ipcRenderer.on('tray-hint', () => cb()) },
 
+  // 网关事件（active-model / route 等）：只转发 payload（不传 event 对象，避免结构化克隆问题）。
+  // 返回 disposer 供 renderer 回收监听，防热重载/重复注册叠加。
+  onGatewayEvent: (cb) => {
+    const handler = (_e, data) => { try { cb(data) } catch {} }
+    ipcRenderer.on('gateway-event', handler)
+    return () => ipcRenderer.removeListener('gateway-event', handler)
+  },
+  // 挂载时主动拉取各工具最新「实际命中模型」（补 push 在监听注册前丢失的事件）
+  getActiveModels: () => ipcRenderer.invoke('get-active-models'),
+
   checkInstall: (tool) => ipcRenderer.invoke('check-install', tool),
 
   writeCodexConfig: (model, key) => ipcRenderer.invoke('write-codex-config', { model, key }),

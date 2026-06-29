@@ -10,6 +10,9 @@ const { startGateway } = require('./gateway')
 let gatewayPort = null
 let gatewayHandle = null
 let gatewayStarting = null
+// 网关广播的「各工具实际命中模型」最新值——供 renderer 挂载时主动拉取（补 push 丢失）。
+// 仅观测值，不持久化；renderer 用它做活跃高亮，与用户所选(持久化)分开。
+const lastActive = {}
 async function ensureGateway() {
   if (gatewayHandle) return gatewayPort
   if (gatewayStarting) return gatewayStarting   // 去重：启动期间的并发调用复用同一次启动
@@ -27,6 +30,16 @@ async function ensureGateway() {
         // 网关接管鉴权：实时把已保存的 API Key 提供给网关注入请求头。
         // 客户端（Codex）只要环境变量「存在」即可，值不再重要——换 Key 不必重开终端。
         getKey: () => (loadConfig().key) || '',
+        // 网关事件 → renderer：route/active-model 用于「客户端实际在跑哪个模型」的活跃回显。
+        // 守卫窗口存活（网关独立于窗口生命周期，关窗后请求仍可能进来）；按工具留存最新值供拉取。
+        onEvent: (evt) => {
+          try {
+            if (evt && evt.type === 'active-model' && evt.tool) {
+              lastActive[evt.tool] = { forwardedModel: evt.forwardedModel, incomingModel: evt.incomingModel, viaSmartRouting: !!evt.viaSmartRouting }
+            }
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('gateway-event', evt)
+          } catch {}
+        },
       })
       gatewayPort = gatewayHandle.port
       // 持久化最终端口：供配置写入与「配置过期」自愈复用；探活复用旧实例时端口稳定不漂移
@@ -89,7 +102,13 @@ function createWindow() {
     resizable: true,
     maximizable: true,
     fullscreenable: true,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    // Windows：用系统绘制的窗口控制按钮（最小化/最大化/关闭）叠加在自绘标题栏右侧。
+    // 这样消除「系统原生栏 + 应用自绘栏」双标题栏，同时保留 Win11 原生圆角/阴影/Snap 布局。
+    // 颜色与自绘 .titlebar 背景一致，height 必须等于 .titlebar 的 46px。
+    ...(process.platform === 'win32' && {
+      titleBarOverlay: { color: '#0a0a0c', symbolColor: '#e5e5e5', height: 46 },
+    }),
     backgroundColor: '#09090b',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -98,6 +117,25 @@ function createWindow() {
     },
   })
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
+
+  // 右键上下文菜单：Windows 用户期望输入框可右键剪切/复制/粘贴/全选（mac 也受益）。
+  // 仅在可编辑区域或有选中文本时弹出，避免在纯展示区弹无意义菜单。
+  win.webContents.on('context-menu', (_e, params) => {
+    const items = []
+    const canEdit = params.isEditable
+    const hasSel = !!(params.selectionText && params.selectionText.trim())
+    if (canEdit) {
+      items.push({ role: 'cut', label: '剪切', enabled: params.editFlags.canCut })
+      items.push({ role: 'copy', label: '复制', enabled: params.editFlags.canCopy })
+      items.push({ role: 'paste', label: '粘贴', enabled: params.editFlags.canPaste })
+      items.push({ type: 'separator' })
+      items.push({ role: 'selectAll', label: '全选' })
+    } else if (hasSel) {
+      items.push({ role: 'copy', label: '复制' })
+    }
+    if (!items.length) return
+    Menu.buildFromTemplate(items).popup({ window: win })
+  })
 
   // 关窗不退：隐藏到托盘，让本地代理在后台继续跑，codex/claude 随时可用。
   // 仅托盘「退出」(app.isQuitting=true) 时才真正关闭。
@@ -258,6 +296,8 @@ ipcMain.handle('get-config', () => loadConfig())
 ipcMain.handle('save-config', (_, data) => { saveConfig({ ...loadConfig(), ...data }); return true })
 ipcMain.handle('get-platform', () => process.platform)
 ipcMain.handle('get-version', () => app.getVersion())
+// 各工具「实际命中模型」最新观测值（renderer 挂载时拉一次，补 push 在监听注册前丢失的事件）
+ipcMain.handle('get-active-models', () => lastActive)
 
 // 代理状态：供主界面显示「运行中 :端口」+ 一键自愈（重新探活/重写配置端口）
 ipcMain.handle('proxy-status', async () => {
@@ -425,11 +465,36 @@ function codexAppPaths() {
   if (process.platform === 'darwin') {
     return ['/Applications/Codex.app', path.join(os.homedir(), 'Applications/Codex.app')]
   }
+  // 非 Store 版（独立安装器）兜底路径；Store/MSIX 版走 detectCodexAppWin 的 Appx 查询。
   return [
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'codex', 'Codex.exe'),
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Codex', 'Codex.exe'),
     'C:\\Program Files\\Codex\\Codex.exe',
   ]
+}
+
+// Windows Codex App 检测：官方桌面版是 MSIX/Store 包，装在
+//   C:\Program Files\WindowsApps\OpenAI.Codex_<版本>_x64__<hash>\app\Codex.exe
+// 该目录普通用户无权限直接 fs 访问，且路径含版本号+随机 hash，无法写死探测。
+// 故用 PowerShell 的 Get-AppxPackage 查包是否存在（MSIX 应用的标准检测方式）；
+// 再回退到独立安装器的固定 exe 路径（覆盖少数非 Store 安装）。
+// 返回值：true=确认已装；false=确认未装；null=查不出（PowerShell 失败/超时）——
+//   null 让上层「拿不准就别禁用按钮」，避免误判把配置按钮锁死。
+function detectCodexAppWin() {
+  return new Promise(resolve => {
+    // 先按固定路径兜底（命中就不用等 PowerShell）
+    if (codexAppPaths().some(p => p && fs.existsSync(p))) return resolve(true)
+    // 查 Store/MSIX 包：先精确 OpenAI.Codex*，宽松兜底匹配名字含 Codex 的任意包。
+    const ps = 'if (Get-AppxPackage -Name "OpenAI.Codex*") { "yes" } '
+      + 'elseif (Get-AppxPackage | Where-Object { $_.Name -like "*Codex*" }) { "yes" } '
+      + 'else { "no" }'
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 8000 }, (err, stdout) => {
+      if (err) return resolve(null)                       // 查不出 → 不确定
+      if (/yes/i.test(stdout || '')) return resolve(true)
+      if (/no/i.test(stdout || '')) return resolve(false) // 明确没有
+      resolve(null)
+    })
+  })
 }
 
 function whichCli(bin) {
@@ -459,6 +524,7 @@ function whichCli(bin) {
 
 ipcMain.handle('check-install', async (_, tool) => {
   if (tool === 'codex-app') {
+    if (process.platform === 'win32') return { installed: await detectCodexAppWin() }
     return { installed: codexAppPaths().some(p => fs.existsSync(p)) }
   }
   if (tool === 'node') {
@@ -492,14 +558,34 @@ function hasContinueExt() {
 }
 
 // ─── 打开已安装的工具 ───────────────────────────────────────────
-ipcMain.handle('open-tool', (_, tool) => {
+// Windows 启动 Codex App：MSIX/Store 包不能直接 spawn exe（路径含 hash 且 WindowsApps 无权限），
+//   标准做法是经 explorer 打开 shell:AppsFolder\<PackageFamilyName>!<AppId>。
+//   先用 Get-AppxPackage 拿 PackageFamilyName + manifest 里的 Application Id 拼 AUMID 启动；
+//   失败再回退独立安装器的 exe 路径。
+function launchCodexAppWin() {
+  return new Promise(resolve => {
+    const ps = [
+      '$p = Get-AppxPackage -Name "OpenAI.Codex*" | Select-Object -First 1;',
+      'if ($p) {',
+      '  $appId = (Get-AppxPackageManifest $p).Package.Applications.Application.Id | Select-Object -First 1;',
+      '  $aumid = "$($p.PackageFamilyName)!$appId";',
+      '  Start-Process "explorer.exe" "shell:AppsFolder\\$aumid"; "launched"',
+      '} else { "notfound" }',
+    ].join(' ')
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 8000 }, (err, stdout) => {
+      if (!err && /launched/i.test(stdout || '')) return resolve(true)
+      const exe = codexAppPaths().find(p => p && fs.existsSync(p))
+      if (exe) { try { spawn(exe, [], { detached: true }); return resolve(true) } catch {} }
+      resolve(false)
+    })
+  })
+}
+
+ipcMain.handle('open-tool', async (_, tool) => {
   try {
     if (tool === 'codex-app') {
       if (process.platform === 'darwin') spawn('open', ['-a', 'Codex'])
-      else {
-        const exe = codexAppPaths().find(p => fs.existsSync(p))
-        if (exe) spawn(exe, [], { detached: true })
-      }
+      else await launchCodexAppWin()
       return { success: true }
     }
     // CLI：开终端并自动运行
@@ -556,10 +642,10 @@ delay 1
 do shell script "open -a Codex"`
       spawn('osascript', ['-e', script])
     } else {
-      const exe = codexAppPaths().find(p => fs.existsSync(p))
-      // Windows：先杀掉再重启（taskkill 找不到进程会报错，忽略即可）
+      // Windows：先杀掉再重启（taskkill 找不到进程会报错，忽略即可）。
+      // MSIX/Store 版用 launchCodexAppWin 经 shell:AppsFolder 启动；exe 兜底也在其中。
       execFile('taskkill', ['/IM', 'Codex.exe', '/F'], () => {
-        setTimeout(() => { if (exe) spawn(exe, [], { detached: true }) }, 1000)
+        setTimeout(() => { launchCodexAppWin() }, 1000)
       })
     }
     return { success: true }
@@ -648,8 +734,19 @@ ipcMain.handle('write-claude-config', async (_, { key, model }) => {
     ...(cfg.env || {}),
     ANTHROPIC_BASE_URL: baseUrl,
     ANTHROPIC_AUTH_TOKEN: key,
+    // 模型发现：让 Claude Code 的 /model 选择器自动列出网关返回的模型（claude/anthropic 前缀）。
+    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1',
   }
   if (model) cfg.env.ANTHROPIC_MODEL = model
+  // 非 claude/anthropic 前缀的模型（如 deepseek/gpt）：discovery 会丢弃，
+  // 改用 ANTHROPIC_CUSTOM_MODEL_OPTION（不校验名字）让用户在 Claude 端 picker 也能看到/选到它。
+  if (model && !/^(claude|anthropic)/i.test(model)) {
+    cfg.env.ANTHROPIC_CUSTOM_MODEL_OPTION = model
+    cfg.env.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME = model + '（经 OnlyRouter）'
+  } else {
+    delete cfg.env.ANTHROPIC_CUSTOM_MODEL_OPTION
+    delete cfg.env.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME
+  }
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(file, JSON.stringify(cfg, null, 2))
   return { success: true }
