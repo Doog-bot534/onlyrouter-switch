@@ -207,6 +207,23 @@ body.is-win .content-scroll::-webkit-scrollbar-thumb:hover{background:var(--dim)
 .tool-track{display:flex;align-items:flex-start;gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;
   -webkit-overflow-scrolling:touch;scroll-behavior:smooth;padding:2px 0 6px;margin:0 -26px;padding-left:26px;padding-right:26px}
 .tool-track::-webkit-scrollbar{height:0}
+/* 工具切换标签：鼠标用户的主要切换入口（比小圆点更易点、更明确） */
+.tool-tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.tool-tab{display:flex;align-items:center;gap:7px;padding:7px 14px;border-radius:999px;font-size:13px;
+  font-weight:600;color:var(--dim);background:var(--inset);border:1px solid var(--line);cursor:pointer;
+  user-select:none;transition:.15s}
+.tool-tab:hover{border-color:var(--line-2);color:var(--dim-2)}
+.tool-tab.on{color:var(--lime);border-color:var(--lime);background:var(--lime-soft)}
+.tool-tab img{width:16px;height:16px;border-radius:4px;flex-shrink:0}
+/* 左右切换箭头：横排卡片两侧，鼠标点击翻页 */
+.tool-track-wrap{position:relative}
+.tool-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:5;width:34px;height:34px;
+  border-radius:50%;border:1px solid var(--line-2);background:rgba(20,20,24,.92);color:var(--text);
+  font-size:20px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:.15s;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+.tool-arrow:hover{border-color:var(--lime);color:var(--lime)}
+.tool-arrow.prev{left:-4px} .tool-arrow.next{right:-4px}
+.tool-arrow[disabled]{opacity:0;pointer-events:none}
 /* 固定理想宽度：窄窗一屏一张（可滑），宽窗一屏自然多张并排 */
 .tool-card{flex:0 0 380px;scroll-snap-align:start;
   background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;transition:border-color .15s}
@@ -342,8 +359,13 @@ body.is-win .content-scroll::-webkit-scrollbar-thumb:hover{background:var(--dim)
   <div class="label">配置你的 AI 工具
     <span class="right" id="srcBadge"><span class="d"></span><span id="srcText">加载中</span></span>
   </div>
-  <div class="action-note" style="margin:-2px 0 12px">左右滑动切换工具 · 每个工具可单独选模型、单独开关增强功能，互不影响。</div>
-  <div class="tool-track" id="toolCards"></div>
+  <div class="action-note" style="margin:-2px 0 12px">点下方标签切换工具 · 每个工具可单独选模型、单独开关增强功能，互不影响。</div>
+  <div class="tool-tabs" id="toolTabs"></div>
+  <div class="tool-track-wrap">
+    <button class="tool-arrow prev" id="toolPrev" aria-label="上一个">‹</button>
+    <div class="tool-track" id="toolCards"></div>
+    <button class="tool-arrow next" id="toolNext" aria-label="下一个">›</button>
+  </div>
   <div class="tool-dots" id="toolDots"></div>
 </div>
 
@@ -635,49 +657,98 @@ function buildToolCard(tool) {
   return card
 }
 
-// 把所有工具卡插入横向轨道 + 构建指示点 + 同步滚动高亮（只建一次）
+// 把所有工具卡插入横向轨道 + 构建标签/箭头/指示点 + 同步滚动高亮（只建一次）
 function renderToolCards() {
   const wrap = document.getElementById('toolCards')
   const dots = document.getElementById('toolDots')
+  const tabs = document.getElementById('toolTabs')
+  const prev = document.getElementById('toolPrev')
+  const next = document.getElementById('toolNext')
   if (!wrap) return
   wrap.innerHTML = ''
   if (dots) dots.innerHTML = ''
+  if (tabs) tabs.innerHTML = ''
+
+  // 滚到第 i 张卡（标签/箭头/点共用）
+  const scrollToCard = i => {
+    const card = wrap.children[i]
+    if (card) wrap.scrollTo({ left: card.offsetLeft - wrap.offsetLeft, behavior: 'smooth' })
+  }
+  // 当前最居中的卡索引
+  const currentIndex = () => {
+    const center = wrap.scrollLeft + wrap.clientWidth / 2
+    let best = 0, bestDist = Infinity
+    for (let i = 0; i < wrap.children.length; i++) {
+      const c = wrap.children[i]
+      const cc = c.offsetLeft - wrap.offsetLeft + c.offsetWidth / 2
+      const dist = Math.abs(cc - center)
+      if (dist < bestDist) { bestDist = dist; best = i }
+    }
+    return best
+  }
+
   TOOL_ORDER.forEach((tool, i) => {
     wrap.appendChild(buildToolCard(tool))
     const btn = document.getElementById('btnConfig-' + tool)
     if (btn) btn.addEventListener('click', () => configTool(tool))
     const docs = document.getElementById('docs-' + tool)
     if (docs) docs.addEventListener('click', () => window.api.openUrl('https://onlyrouter.ai/docs'))
-    // 指示点：点击滚到对应卡
+    // 工具切换标签（鼠标主入口：带图标 + 名字，点了滚到对应卡）
+    if (tabs) {
+      const tb = document.createElement('button')
+      tb.className = 'tool-tab' + (i === 0 ? ' on' : '')
+      tb.innerHTML = `<img src="${TOOLS[tool].icon}" alt=""><span>${TOOLS[tool].name}</span>`
+      tb.addEventListener('click', () => scrollToCard(i))
+      tabs.appendChild(tb)
+    }
+    // 指示点：点击滚到对应卡（保留，作为紧凑的位置指示）
     if (dots) {
       const d = document.createElement('div')
       d.className = 'tool-dot' + (i === 0 ? ' on' : '')
-      d.addEventListener('click', () => {
-        const card = wrap.children[i]
-        if (card) wrap.scrollTo({ left: card.offsetLeft - wrap.offsetLeft, behavior: 'smooth' })
-      })
+      d.addEventListener('click', () => scrollToCard(i))
       dots.appendChild(d)
     }
   })
-  // 单卡时无需指示点
-  if (dots) dots.style.display = TOOL_ORDER.length > 1 ? '' : 'none'
-  // 滚动时高亮最居中的卡对应的点
+
+  const multi = TOOL_ORDER.length > 1
+  if (dots) dots.style.display = multi ? '' : 'none'
+  if (tabs) tabs.style.display = multi ? '' : 'none'
+
+  // 高亮当前卡对应的标签/点 + 箭头可用性（到头/到尾禁用对应箭头）
+  const syncActive = () => {
+    const idx = currentIndex()
+    if (dots) [...dots.children].forEach((d, i) => d.classList.toggle('on', i === idx))
+    if (tabs) [...tabs.children].forEach((t, i) => t.classList.toggle('on', i === idx))
+    if (prev) prev.disabled = idx <= 0
+    if (next) next.disabled = idx >= wrap.children.length - 1
+  }
+
+  // 左右箭头：翻到相邻卡
+  if (prev) prev.onclick = () => scrollToCard(Math.max(0, currentIndex() - 1))
+  if (next) next.onclick = () => scrollToCard(Math.min(wrap.children.length - 1, currentIndex() + 1))
+  // 多卡才显示箭头
+  if (prev) prev.style.display = multi ? '' : 'none'
+  if (next) next.style.display = multi ? '' : 'none'
+
+  // 鼠标滚轮：仅当卡片轨道确有横向溢出、且未到滚动边界时，把竖向滚轮转为横向翻动；
+  // 到边界或无溢出则不拦截，让页面正常竖向滚动（避免卡住页面滚动）。
+  wrap.addEventListener('wheel', e => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+    const maxScroll = wrap.scrollWidth - wrap.clientWidth
+    if (maxScroll <= 1) return  // 宽窗多卡并排、无溢出
+    const atStart = wrap.scrollLeft <= 0 && e.deltaY < 0
+    const atEnd = wrap.scrollLeft >= maxScroll - 1 && e.deltaY > 0
+    if (atStart || atEnd) return  // 到头/到尾交还给页面竖向滚动
+    wrap.scrollLeft += e.deltaY
+    e.preventDefault()
+  }, { passive: false })
+
   let raf = null
   wrap.addEventListener('scroll', () => {
     if (raf) return
-    raf = requestAnimationFrame(() => {
-      raf = null
-      const center = wrap.scrollLeft + wrap.clientWidth / 2
-      let best = 0, bestDist = Infinity
-      for (let i = 0; i < wrap.children.length; i++) {
-        const c = wrap.children[i]
-        const cc = c.offsetLeft - wrap.offsetLeft + c.offsetWidth / 2
-        const dist = Math.abs(cc - center)
-        if (dist < bestDist) { bestDist = dist; best = i }
-      }
-      if (dots) [...dots.children].forEach((d, i) => d.classList.toggle('on', i === best))
-    })
+    raf = requestAnimationFrame(() => { raf = null; syncActive() })
   })
+  syncActive()
 }
 
 // 一键配置某工具：写配置 + 成功后弹「帮我重启终端」对话框（两工具共用，差异用 TOOLS 元信息）
