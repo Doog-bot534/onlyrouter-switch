@@ -359,7 +359,7 @@ body.is-win .content-scroll::-webkit-scrollbar-thumb:hover{background:var(--dim)
   <div class="label">配置你的 AI 工具
     <span class="right" id="srcBadge"><span class="d"></span><span id="srcText">加载中</span></span>
   </div>
-  <div class="action-note" style="margin:-2px 0 12px">点下方标签切换工具 · 每个工具可单独选模型、单独开关增强功能，互不影响。</div>
+  <div class="action-note" id="toolHint" style="margin:-2px 0 12px">每个工具可单独选模型、单独开关增强功能，互不影响。</div>
   <div class="tool-tabs" id="toolTabs"></div>
   <div class="tool-track-wrap">
     <button class="tool-arrow prev" id="toolPrev" aria-label="上一个">‹</button>
@@ -665,6 +665,9 @@ function renderToolCards() {
   const prev = document.getElementById('toolPrev')
   const next = document.getElementById('toolNext')
   if (!wrap) return
+  // 鼠标友好套件（标签/箭头/滚轮转横向）仅 Windows 启用：mac 触控板两指横滑本就原生流畅，
+  // 加滚轮拦截反而改坏手感。mac 保持原体验——原生横滑 + 圆点指示，不加额外控件。
+  const isWin = !!(window.api && window.api.platform === 'win32')
   wrap.innerHTML = ''
   if (dots) dots.innerHTML = ''
   if (tabs) tabs.innerHTML = ''
@@ -693,8 +696,8 @@ function renderToolCards() {
     if (btn) btn.addEventListener('click', () => configTool(tool))
     const docs = document.getElementById('docs-' + tool)
     if (docs) docs.addEventListener('click', () => window.api.openUrl('https://onlyrouter.ai/docs'))
-    // 工具切换标签（鼠标主入口：带图标 + 名字，点了滚到对应卡）
-    if (tabs) {
+    // 工具切换标签（仅 Windows：鼠标主入口，带图标 + 名字，点了滚到对应卡）
+    if (tabs && isWin) {
       const tb = document.createElement('button')
       tb.className = 'tool-tab' + (i === 0 ? ' on' : '')
       tb.innerHTML = `<img src="${TOOLS[tool].icon}" alt=""><span>${TOOLS[tool].name}</span>`
@@ -711,8 +714,15 @@ function renderToolCards() {
   })
 
   const multi = TOOL_ORDER.length > 1
+  // 圆点指示两端都有；标签/箭头仅 Windows。
   if (dots) dots.style.display = multi ? '' : 'none'
-  if (tabs) tabs.style.display = multi ? '' : 'none'
+  if (tabs) tabs.style.display = (multi && isWin) ? '' : 'none'
+  // 提示文案按平台：mac 引导横滑，Windows 引导点标签
+  const hint = document.getElementById('toolHint')
+  if (hint && multi) {
+    const how = isWin ? '点上方标签或左右箭头切换工具' : '左右滑动切换工具'
+    hint.textContent = how + ' · 每个工具可单独选模型、单独开关增强功能，互不影响。'
+  }
 
   // 高亮当前卡对应的标签/点 + 箭头可用性（到头/到尾禁用对应箭头）
   const syncActive = () => {
@@ -723,25 +733,28 @@ function renderToolCards() {
     if (next) next.disabled = idx >= wrap.children.length - 1
   }
 
-  // 左右箭头：翻到相邻卡
-  if (prev) prev.onclick = () => scrollToCard(Math.max(0, currentIndex() - 1))
-  if (next) next.onclick = () => scrollToCard(Math.min(wrap.children.length - 1, currentIndex() + 1))
-  // 多卡才显示箭头
-  if (prev) prev.style.display = multi ? '' : 'none'
-  if (next) next.style.display = multi ? '' : 'none'
+  // 左右箭头（仅 Windows）：翻到相邻卡
+  if (isWin) {
+    if (prev) prev.onclick = () => scrollToCard(Math.max(0, currentIndex() - 1))
+    if (next) next.onclick = () => scrollToCard(Math.min(wrap.children.length - 1, currentIndex() + 1))
+  }
+  if (prev) prev.style.display = (multi && isWin) ? '' : 'none'
+  if (next) next.style.display = (multi && isWin) ? '' : 'none'
 
-  // 鼠标滚轮：仅当卡片轨道确有横向溢出、且未到滚动边界时，把竖向滚轮转为横向翻动；
-  // 到边界或无溢出则不拦截，让页面正常竖向滚动（避免卡住页面滚动）。
-  wrap.addEventListener('wheel', e => {
-    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
-    const maxScroll = wrap.scrollWidth - wrap.clientWidth
-    if (maxScroll <= 1) return  // 宽窗多卡并排、无溢出
-    const atStart = wrap.scrollLeft <= 0 && e.deltaY < 0
-    const atEnd = wrap.scrollLeft >= maxScroll - 1 && e.deltaY > 0
-    if (atStart || atEnd) return  // 到头/到尾交还给页面竖向滚动
-    wrap.scrollLeft += e.deltaY
-    e.preventDefault()
-  }, { passive: false })
+  // 鼠标滚轮转横向（仅 Windows）：mac 触控板横滑原生流畅，拦截会改坏手感，故不在 mac 加。
+  // 仅当卡片轨道确有横向溢出、且未到滚动边界时转横向；到边界/无溢出不拦截，让页面正常竖滚。
+  if (isWin) {
+    wrap.addEventListener('wheel', e => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+      const maxScroll = wrap.scrollWidth - wrap.clientWidth
+      if (maxScroll <= 1) return
+      const atStart = wrap.scrollLeft <= 0 && e.deltaY < 0
+      const atEnd = wrap.scrollLeft >= maxScroll - 1 && e.deltaY > 0
+      if (atStart || atEnd) return
+      wrap.scrollLeft += e.deltaY
+      e.preventDefault()
+    }, { passive: false })
+  }
 
   let raf = null
   wrap.addEventListener('scroll', () => {
